@@ -77,6 +77,6 @@ def update_file(ctx: Context, rel_path: str) -> str:
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
     try:
         client.close_files([rel_path])
-    except Exception as e:
+    except Exception:
         pass
     return file_content
