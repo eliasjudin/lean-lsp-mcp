@@ -9,6 +9,7 @@ import urllib
 import json
 import functools
 import subprocess
+import uuid
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.utilities.logging import get_logger
@@ -529,7 +530,7 @@ def run_code(ctx: Context, code: str) -> List[str] | str:
     if lean_project_path is None:
         return "No valid Lean project path found. Run another tool (e.g. `lean_diagnostic_messages`) first to set it up or set the LEAN_PROJECT_PATH environment variable."
 
-    rel_path = "temp_snippet.lean"
+    rel_path = f"_mcp_snippet_{uuid.uuid4().hex}.lean"
     abs_path = os.path.join(lean_project_path, rel_path)
 
     try:
@@ -557,7 +558,8 @@ def run_code(ctx: Context, code: str) -> List[str] | str:
         return "Lean client is not available. Run another tool to initialize the project first."
 
     diagnostics: List[str] | str
-    cleanup_error: str | None = None
+    close_error: str | None = None
+    remove_error: str | None = None
 
     try:
         client.open_file(rel_path)
@@ -565,15 +567,25 @@ def run_code(ctx: Context, code: str) -> List[str] | str:
     finally:
         try:
             client.close_files([rel_path])
-        except Exception:
-            pass
+        except Exception as exc:  # pragma: no cover - close failures only logged
+            close_error = str(exc)
+            logger.warning(
+                "Failed to close `%s` after run_code: %s", rel_path, exc
+            )
         try:
             os.remove(abs_path)
+        except FileNotFoundError:
+            pass
         except Exception as e:
-            cleanup_error = str(e)
+            remove_error = str(e)
+            logger.warning(
+                "Failed to remove temporary Lean snippet `%s`: %s", abs_path, e
+            )
 
-    if cleanup_error:
-        return f"Error removing temporary file `{abs_path}`:\n{cleanup_error}"
+    if remove_error:
+        return f"Error removing temporary file `{abs_path}`:\n{remove_error}"
+    if close_error:
+        return f"Error closing temporary Lean document `{rel_path}`:\n{close_error}"
 
     return (
         diagnostics
