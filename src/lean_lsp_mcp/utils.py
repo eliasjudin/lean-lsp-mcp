@@ -153,7 +153,7 @@ def format_line(
     """
     lines = file_content.splitlines()
     line_number -= 1
-    if line_number < 1 or line_number > len(lines):
+    if line_number < 0 or line_number >= len(lines):
         return "Line number out of range"
     line = lines[line_number]
     if column is None:
