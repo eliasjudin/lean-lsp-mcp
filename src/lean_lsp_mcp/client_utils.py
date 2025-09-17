@@ -79,7 +79,8 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
     # Try to find the new correct project path by checking all directories in file_path.
     file_dir = os.path.dirname(file_path)
     rel_path = None
-    while file_dir:
+    prev_dir = None
+    while file_dir and file_dir != prev_dir:
         if valid_lean_project_path(file_dir):
             lean_project_path = file_dir
             rel_path = get_relative_file_path(lean_project_path, file_path)
@@ -90,6 +91,7 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
                 startup_client(ctx)
                 break
         # Move up one directory
+        prev_dir = file_dir
         file_dir = os.path.dirname(file_dir)
 
     return rel_path
