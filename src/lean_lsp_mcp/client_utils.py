@@ -36,16 +36,23 @@ def startup_client(ctx: Context):
         with StdoutToStderr():
             try:
                 client = LeanLSPClient(
-                    lean_project_path, initial_build=True, print_warnings=False
+                    lean_project_path, initial_build=False, print_warnings=False
                 )
                 logger.info(
                     "Connected to Lean language server at %s", lean_project_path
                 )
             except Exception as e:
-                client = LeanLSPClient(
-                    lean_project_path, initial_build=False, print_warnings=False
+                logger.warning(
+                    "Lean LSP startup without build failed, retrying with initial build: %s",
+                    e,
                 )
-                logger.error("Could not do initial build, error: %s", e)
+                client = LeanLSPClient(
+                    lean_project_path, initial_build=True, print_warnings=False
+                )
+                logger.info(
+                    "Connected to Lean language server after build at %s",
+                    lean_project_path,
+                )
         lifespan.client = client
 
 
