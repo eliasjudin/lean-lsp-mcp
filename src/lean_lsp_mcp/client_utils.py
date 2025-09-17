@@ -1,4 +1,5 @@
 import os
+from threading import Lock
 
 from mcp.server.fastmcp import Context
 from mcp.server.fastmcp.utilities.logging import get_logger
@@ -9,6 +10,7 @@ from lean_lsp_mcp.utils import StdoutToStderr
 
 
 logger = get_logger(__name__)
+CLIENT_LOCK = Lock()
 
 
 def startup_client(ctx: Context):
@@ -17,31 +19,34 @@ def startup_client(ctx: Context):
     Args:
         ctx (Context): Context object.
     """
-    lean_project_path = ctx.request_context.lifespan_context.lean_project_path
-    if lean_project_path is None:
-        raise ValueError("lean project path is not set.")
+    with CLIENT_LOCK:
+        lean_project_path = ctx.request_context.lifespan_context.lean_project_path
+        if lean_project_path is None:
+            raise ValueError("lean project path is not set.")
 
-    # Check if already correct client
-    client: LeanLSPClient | None = ctx.request_context.lifespan_context.client
+        lifespan = ctx.request_context.lifespan_context
+        client: LeanLSPClient | None = lifespan.client
 
-    if client is not None:
-        if client.project_path == lean_project_path:
-            return
-        client.close()
-        ctx.request_context.lifespan_context.file_content_hashes.clear()
+        if client is not None:
+            if client.project_path == lean_project_path:
+                return
+            client.close()
+            lifespan.file_content_hashes.clear()
 
-    with StdoutToStderr():
-        try:
-            client = LeanLSPClient(
-                lean_project_path, initial_build=True, print_warnings=False
-            )
-            logger.info(f"Connected to Lean language server at {lean_project_path}")
-        except Exception as e:
-            client = LeanLSPClient(
-                lean_project_path, initial_build=False, print_warnings=False
-            )
-            logger.error(f"Could not do initial build, error: {e}")
-    ctx.request_context.lifespan_context.client = client
+        with StdoutToStderr():
+            try:
+                client = LeanLSPClient(
+                    lean_project_path, initial_build=True, print_warnings=False
+                )
+                logger.info(
+                    "Connected to Lean language server at %s", lean_project_path
+                )
+            except Exception as e:
+                client = LeanLSPClient(
+                    lean_project_path, initial_build=False, print_warnings=False
+                )
+                logger.error("Could not do initial build, error: %s", e)
+        lifespan.client = client
 
 
 def valid_lean_project_path(path: str) -> bool:
