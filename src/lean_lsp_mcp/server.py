@@ -15,7 +15,7 @@ from mcp.server.fastmcp.utilities.logging import get_logger
 from mcp.server.auth.settings import AuthSettings
 from leanclient import LeanLSPClient, DocumentContentChange
 
-from lean_lsp_mcp.client_utils import setup_client_for_file
+from lean_lsp_mcp.client_utils import setup_client_for_file, startup_client
 from lean_lsp_mcp.file_utils import get_file_contents, update_file
 from lean_lsp_mcp.instructions import INSTRUCTIONS
 from lean_lsp_mcp.utils import (
@@ -130,6 +130,12 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) 
     else:
         lean_project_path = os.path.abspath(lean_project_path)
         ctx.request_context.lifespan_context.lean_project_path = lean_project_path
+
+    if not lean_project_path:
+        return (
+            "No Lean project path configured. Provide `lean_project_path` or set "
+            "`LEAN_PROJECT_PATH`."
+        )
 
     build_output = ""
     try:
@@ -526,14 +532,42 @@ def run_code(ctx: Context, code: str) -> List[str] | str:
     except Exception as e:
         return f"Error writing code snippet to file `{abs_path}`:\n{str(e)}"
 
-    client: LeanLSPClient = ctx.request_context.lifespan_context.client
-    diagnostics = format_diagnostics(client.get_diagnostics(rel_path))
-    client.close_files([rel_path])
+    # Ensure a Lean client is ready before asking for diagnostics.
+    try:
+        startup_client(ctx)
+    except Exception as e:
+        try:
+            os.remove(abs_path)
+        except Exception:
+            pass
+        return f"Error starting Lean client for `{rel_path}`:\n{str(e)}"
+
+    client: LeanLSPClient | None = ctx.request_context.lifespan_context.client
+    if client is None:
+        try:
+            os.remove(abs_path)
+        except Exception:
+            pass
+        return "Lean client is not available. Run another tool to initialize the project first."
+
+    diagnostics: List[str] | str
+    cleanup_error: str | None = None
 
     try:
-        os.remove(abs_path)
-    except Exception as e:
-        return f"Error removing temporary file `{abs_path}`:\n{str(e)}"
+        client.open_file(rel_path)
+        diagnostics = format_diagnostics(client.get_diagnostics(rel_path))
+    finally:
+        try:
+            client.close_files([rel_path])
+        except Exception:
+            pass
+        try:
+            os.remove(abs_path)
+        except Exception as e:
+            cleanup_error = str(e)
+
+    if cleanup_error:
+        return f"Error removing temporary file `{abs_path}`:\n{cleanup_error}"
 
     return (
         diagnostics
