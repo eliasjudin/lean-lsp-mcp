@@ -10,6 +10,7 @@ import json
 import functools
 import subprocess
 import uuid
+from types import SimpleNamespace
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.utilities.logging import get_logger
@@ -63,6 +64,21 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
                 "hammer_premise": [],
             },
         )
+        if context.lean_project_path:
+            try:
+                logger.info(
+                    "Prewarming Lean client for %s", context.lean_project_path
+                )
+                dummy_ctx = SimpleNamespace(
+                    request_context=SimpleNamespace(lifespan_context=context)
+                )
+                startup_client(dummy_ctx)
+            except Exception as exc:  # pragma: no cover - prewarm best effort
+                logger.warning(
+                    "Lean client prewarm failed for %s: %s",
+                    context.lean_project_path,
+                    exc,
+                )
         yield context
     finally:
         logger.info("Closing Lean LSP client")
