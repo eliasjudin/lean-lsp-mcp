@@ -1,7 +1,7 @@
 import os
 import sys
 import tempfile
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
@@ -58,6 +58,51 @@ class OutputCapture:
         return self.captured_output
 
 
+def _normalize_position(line: int, character: int) -> Dict[str, int]:
+    """Return 1-indexed line/column payloads."""
+
+    return {"line": line + 1, "column": character + 1}
+
+
+def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional[Dict[str, Dict[str, int]]]:
+    """Convert an LSP range (0-indexed) into 1-indexed coordinates."""
+
+    if not range_dict:
+        return None
+    return {
+        "start": _normalize_position(
+            range_dict["start"]["line"], range_dict["start"]["character"]
+        ),
+        "end": _normalize_position(
+            range_dict["end"]["line"], range_dict["end"]["character"]
+        ),
+    }
+
+
+def diagnostics_to_entries(
+    diagnostics: List[Dict], select_line: int = -1
+) -> List[Dict[str, Any]]:
+    """Convert Lean diagnostics to structured entries."""
+
+    entries: List[Dict[str, Any]] = []
+    if select_line != -1:
+        diagnostics = filter_diagnostics_by_position(diagnostics, select_line, None)
+
+    for diag in diagnostics:
+        primary_range = diag.get("fullRange", diag.get("range"))
+        entry: Dict[str, Any] = {
+            "message": diag.get("message", ""),
+            "severity": diag.get("severity"),
+            "range": normalize_range(primary_range),
+        }
+        if "source" in diag:
+            entry["source"] = diag["source"]
+        if "code" in diag:
+            entry["code"] = diag["code"]
+        entries.append(entry)
+    return entries
+
+
 def format_diagnostics(diagnostics: List[Dict], select_line: int = -1) -> List[str]:
     """Format the diagnostics messages.
 
@@ -88,6 +133,29 @@ def format_goal(goal, default_msg):
         return default_msg
     rendered = goal.get("rendered")
     return rendered.replace("```lean\n", "").replace("\n```", "") if rendered else None
+
+
+def clean_rendered(goal: Optional[Dict[str, Any]]) -> Optional[str]:
+    if goal is None:
+        return None
+    rendered = goal.get("rendered")
+    if rendered is None:
+        return None
+    return rendered.replace("```lean\n", "").replace("\n```", "")
+
+
+def goal_to_payload(goal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if goal is None:
+        return None
+    payload: Dict[str, Any] = {
+        "rendered": clean_rendered(goal),
+        "goals": goal.get("goals", []),
+    }
+    if "userState" in goal:
+        payload["user_state"] = goal["userState"]
+    if "pp" in goal:
+        payload["pp"] = goal["pp"]
+    return payload
 
 
 def extract_range(content: str, range: dict) -> str:
