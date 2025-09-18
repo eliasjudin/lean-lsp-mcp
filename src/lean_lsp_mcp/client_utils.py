@@ -80,11 +80,17 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
     Returns:
         str: Relative file path if the client is set up correctly, otherwise None.
     """
+    lifespan = ctx.request_context.lifespan_context
+    project_cache = getattr(lifespan, "project_cache", {})
+
     # Check if the file_path works for the current lean_project_path.
-    lean_project_path = ctx.request_context.lifespan_context.lean_project_path
+    lean_project_path = lifespan.lean_project_path
     if lean_project_path is not None:
         rel_path = get_relative_file_path(lean_project_path, file_path)
         if rel_path is not None:
+            project_cache[os.path.dirname(os.path.abspath(file_path))] = (
+                lean_project_path
+            )
             startup_client(ctx)
             return rel_path
 
@@ -92,16 +98,33 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
     file_dir = os.path.dirname(file_path)
     rel_path = None
     prev_dir = None
+    visited_dirs: list[str] = []
     while file_dir and file_dir != prev_dir:
-        if valid_lean_project_path(file_dir):
+        visited_dirs.append(file_dir)
+        cached_root = project_cache.get(file_dir)
+        if cached_root:
+            lean_project_path = cached_root
+            rel_path = get_relative_file_path(lean_project_path, file_path)
+            if rel_path is not None:
+                lifespan.lean_project_path = lean_project_path
+                for visited in visited_dirs:
+                    project_cache[visited] = lean_project_path
+                startup_client(ctx)
+                break
+        elif file_dir in project_cache:
+            # Negative cache entry, skip expensive checks
+            pass
+        elif valid_lean_project_path(file_dir):
             lean_project_path = file_dir
             rel_path = get_relative_file_path(lean_project_path, file_path)
             if rel_path is not None:
-                ctx.request_context.lifespan_context.lean_project_path = (
-                    lean_project_path
-                )
+                lifespan.lean_project_path = lean_project_path
+                for visited in visited_dirs:
+                    project_cache[visited] = lean_project_path
                 startup_client(ctx)
                 break
+        else:
+            project_cache[file_dir] = ""
         # Move up one directory
         prev_dir = file_dir
         file_dir = os.path.dirname(file_dir)

@@ -42,6 +42,7 @@ class AppContext:
     client: LeanLSPClient | None
     file_content_hashes: Dict[str, str]
     rate_limit: Dict[str, List[int]]
+    project_cache: Dict[str, str]
 
 
 @asynccontextmanager
@@ -63,6 +64,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
                 "lean_state_search": [],
                 "hammer_premise": [],
             },
+            project_cache={},
         )
         if context.lean_project_path:
             try:
