@@ -10,7 +10,6 @@ from lean_lsp_mcp.utils import StdoutToStderr
 
 
 logger = get_logger(__name__)
-CLIENT_LOCK = Lock()
 
 
 def startup_client(ctx: Context):
@@ -19,12 +18,16 @@ def startup_client(ctx: Context):
     Args:
         ctx (Context): Context object.
     """
-    with CLIENT_LOCK:
-        lean_project_path = ctx.request_context.lifespan_context.lean_project_path
+    lifespan = ctx.request_context.lifespan_context
+    client_lock: Lock | None = getattr(lifespan, "client_lock", None)
+    if client_lock is None:
+        client_lock = Lock()
+        lifespan.client_lock = client_lock
+    with client_lock:
+        lean_project_path = lifespan.lean_project_path
         if lean_project_path is None:
             raise ValueError("lean project path is not set.")
 
-        lifespan = ctx.request_context.lifespan_context
         client: LeanLSPClient | None = lifespan.client
 
         if client is not None:

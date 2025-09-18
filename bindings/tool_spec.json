@@ -1,0 +1,366 @@
+{
+  "version": "2024-06-21",
+  "schema_version": "1.0.0",
+  "tools": [
+    {
+      "name": "lean_build",
+      "description": "Build the Lean project and restart the LSP server.",
+      "inputs": [
+        {
+          "name": "lean_project_path",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "clean",
+          "type": "boolean",
+          "required": false,
+          "default": false
+        }
+      ],
+      "response": "LeanBuildResult"
+    },
+    {
+      "name": "lean_file_contents",
+      "description": "Get the content of a Lean file.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "annotate_lines",
+          "type": "boolean",
+          "required": false,
+          "default": true
+        },
+        {
+          "name": "start_line",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "line_count",
+          "type": "integer",
+          "required": false
+        }
+      ],
+      "response": "FileContents"
+    },
+    {
+      "name": "lean_diagnostic_messages",
+      "description": "Fetch diagnostics for a Lean file.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "start_line",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "line_count",
+          "type": "integer",
+          "required": false
+        }
+      ],
+      "response": "Diagnostics"
+    },
+    {
+      "name": "lean_goal",
+      "description": "Return the goals at a given location.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "column",
+          "type": "integer",
+          "required": false
+        }
+      ],
+      "response": "Goal"
+    },
+    {
+      "name": "lean_term_goal",
+      "description": "Return the expected term type at a location.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "column",
+          "type": "integer",
+          "required": false
+        }
+      ],
+      "response": "Goal"
+    },
+    {
+      "name": "lean_hover_info",
+      "description": "Return hover info for a position.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "column",
+          "type": "integer",
+          "required": true
+        }
+      ],
+      "response": "Hover"
+    },
+    {
+      "name": "lean_completions",
+      "description": "Return completion suggestions at a position.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "column",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "max_completions",
+          "type": "integer",
+          "required": false,
+          "default": 32
+        }
+      ],
+      "response": "Completions"
+    },
+    {
+      "name": "lean_declaration_file",
+      "description": "Return the declaration file for a symbol.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "symbol",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "response": "Declaration"
+    },
+    {
+      "name": "lean_multi_attempt",
+      "description": "Apply multiple snippets at a line and compare results.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "snippets",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "required": true
+        }
+      ],
+      "response": "MultiAttempt"
+    },
+    {
+      "name": "lean_run_code",
+      "description": "Run an isolated Lean snippet and report diagnostics.",
+      "inputs": [
+        {
+          "name": "code",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "response": "RunCode"
+    },
+    {
+      "name": "lean_leansearch",
+      "description": "Search Lean theorems via leansearch.net.",
+      "inputs": [
+        {
+          "name": "query",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "num_results",
+          "type": "integer",
+          "required": false,
+          "default": 5
+        }
+      ],
+      "response": "SearchResults",
+      "rate_limit": {
+        "category": "leansearch",
+        "max": 3,
+        "window_seconds": 30
+      }
+    },
+    {
+      "name": "lean_loogle",
+      "description": "Search definitions and theorems via loogle.",
+      "inputs": [
+        {
+          "name": "query",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "num_results",
+          "type": "integer",
+          "required": false,
+          "default": 8
+        }
+      ],
+      "response": "SearchResults",
+      "rate_limit": {
+        "category": "loogle",
+        "max": 3,
+        "window_seconds": 30
+      }
+    },
+    {
+      "name": "lean_state_search",
+      "description": "Goal-directed search using premise-search.com.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "column",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "num_results",
+          "type": "integer",
+          "required": false,
+          "default": 5
+        }
+      ],
+      "response": "SearchResults",
+      "rate_limit": {
+        "category": "lean_state_search",
+        "max": 3,
+        "window_seconds": 30
+      }
+    },
+    {
+      "name": "lean_hammer_premise",
+      "description": "Fetch premises via the Lean hammer service.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "column",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "num_results",
+          "type": "integer",
+          "required": false,
+          "default": 32
+        }
+      ],
+      "response": "SearchResults",
+      "rate_limit": {
+        "category": "hammer_premise",
+        "max": 3,
+        "window_seconds": 30
+      }
+    }
+  ],
+  "responses": {
+    "LeanBuildResult": {
+      "description": "Build output and project path."
+    },
+    "FileContents": {
+      "description": "File contents with optional line annotations."
+    },
+    "Diagnostics": {
+      "description": "Diagnostics emitted by the Lean LSP."
+    },
+    "Goal": {
+      "description": "Goal state at a location."
+    },
+    "Hover": {
+      "description": "Hover information for a symbol."
+    },
+    "Completions": {
+      "description": "Completion suggestions."
+    },
+    "Declaration": {
+      "description": "Declaration text for a symbol."
+    },
+    "MultiAttempt": {
+      "description": "Diagnostics and goals per snippet."
+    },
+    "RunCode": {
+      "description": "Diagnostics for a temporary snippet."
+    },
+    "SearchResults": {
+      "description": "Results from external search services."
+    }
+  }
+}

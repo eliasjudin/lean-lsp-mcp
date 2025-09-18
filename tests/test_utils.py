@@ -45,3 +45,16 @@ def test_goal_to_payload_extracts_rendered_text():
     assert payload["rendered"] == "goal text"
     assert payload["goals"] == ["goal text"]
     assert payload["user_state"] == "state"
+
+
+def test_compute_pagination_returns_expected_slice():
+    start, end, meta = utils.compute_pagination(100, 11, 10)
+    assert (start, end) == (11, 20)
+    assert meta["has_more"] is True
+    assert meta["next_start_line"] == 21
+
+
+def test_compute_pagination_defaults_to_full_range():
+    start, end, meta = utils.compute_pagination(5, None, None)
+    assert (start, end) == (1, 5)
+    assert meta["has_more"] is False

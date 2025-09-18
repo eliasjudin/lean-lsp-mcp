@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Dict, MutableMapping
 
+from lean_lsp_mcp.schema_types import ResponseMeta
+
 SCHEMA_VERSION = "1.0.0"
 RESPONSE_FORMAT_ENV = "LEAN_LSP_MCP_RESPONSE_FORMAT"
 
@@ -18,7 +20,7 @@ def _is_legacy_mode() -> bool:
 def make_response(
     status: str,
     data: Any = None,
-    meta: MutableMapping[str, Any] | None = None,
+    meta: MutableMapping[str, Any] | ResponseMeta | None = None,
     legacy_formatter: LegacyFormatter = None,
 ) -> Any:
     """Create a response envelope or fall back to legacy formatting.
@@ -32,13 +34,15 @@ def make_response(
             legacy mode is requested the raw data is returned.
     """
 
+    response_meta: Dict[str, Any] = {"schema_version": SCHEMA_VERSION}
+    if meta:
+        response_meta.update(meta)
+
     envelope: Dict[str, Any] = {
         "status": status,
         "data": data,
-        "meta": {"schema_version": SCHEMA_VERSION},
+        "meta": response_meta,
     }
-    if meta:
-        envelope["meta"].update(meta)
 
     if _is_legacy_mode():
         if legacy_formatter is None:

@@ -5,6 +5,14 @@ from typing import Any, Dict, List, Optional
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
+from lean_lsp_mcp.schema_types import (
+    DiagnosticEntry,
+    GoalPayload,
+    PaginationMeta,
+    Position,
+    Range,
+)
+
 
 class StdoutToStderr:
     """Redirects stdout to stderr at the file descriptor level bc lake build logging"""
@@ -58,13 +66,13 @@ class OutputCapture:
         return self.captured_output
 
 
-def _normalize_position(line: int, character: int) -> Dict[str, int]:
+def _normalize_position(line: int, character: int) -> Position:
     """Return 1-indexed line/column payloads."""
 
     return {"line": line + 1, "column": character + 1}
 
 
-def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional[Dict[str, Dict[str, int]]]:
+def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional[Range]:
     """Convert an LSP range (0-indexed) into 1-indexed coordinates."""
 
     if not range_dict:
@@ -79,9 +87,34 @@ def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional
     }
 
 
+def compute_pagination(
+    total_lines: int,
+    start_line: Optional[int],
+    line_count: Optional[int],
+) -> tuple[int, int, PaginationMeta]:
+    """Normalize pagination inputs and build response metadata."""
+
+    if start_line is None or start_line < 1:
+        start_line = 1
+    if line_count is None or line_count < 1:
+        line_count = total_lines - start_line + 1
+
+    end_line = min(total_lines, start_line + line_count - 1)
+    has_more = end_line < total_lines
+    next_start = end_line + 1 if has_more else None
+    meta: PaginationMeta = {
+        "start_line": start_line,
+        "end_line": end_line if total_lines else 0,
+        "total_lines": total_lines,
+        "has_more": has_more,
+        "next_start_line": next_start,
+    }
+    return start_line, end_line, meta
+
+
 def diagnostics_to_entries(
     diagnostics: List[Dict], select_line: int = -1
-) -> List[Dict[str, Any]]:
+) -> List[DiagnosticEntry]:
     """Convert Lean diagnostics to structured entries."""
 
     entries: List[Dict[str, Any]] = []
@@ -90,7 +123,7 @@ def diagnostics_to_entries(
 
     for diag in diagnostics:
         primary_range = diag.get("fullRange", diag.get("range"))
-        entry: Dict[str, Any] = {
+        entry: DiagnosticEntry = {
             "message": diag.get("message", ""),
             "severity": diag.get("severity"),
             "range": normalize_range(primary_range),
@@ -144,10 +177,10 @@ def clean_rendered(goal: Optional[Dict[str, Any]]) -> Optional[str]:
     return rendered.replace("```lean\n", "").replace("\n```", "")
 
 
-def goal_to_payload(goal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def goal_to_payload(goal: Optional[Dict[str, Any]]) -> Optional[GoalPayload]:
     if goal is None:
         return None
-    payload: Dict[str, Any] = {
+    payload: GoalPayload = {
         "rendered": clean_rendered(goal),
         "goals": goal.get("goals", []),
     }

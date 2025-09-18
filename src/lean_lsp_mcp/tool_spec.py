@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from .schema import SCHEMA_VERSION
 
-TOOL_SPEC_VERSION = "2024-06-15"
+TOOL_SPEC_VERSION = "2024-06-21"
 
 BASIC_TOOLS: List[Dict[str, Any]] = [
     {
@@ -24,13 +24,19 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
         "inputs": [
             {"name": "file_path", "type": "string", "required": True},
             {"name": "annotate_lines", "type": "boolean", "required": False, "default": True},
+            {"name": "start_line", "type": "integer", "required": False},
+            {"name": "line_count", "type": "integer", "required": False},
         ],
         "response": "FileContents",
     },
     {
         "name": "lean_diagnostic_messages",
         "description": "Fetch diagnostics for a Lean file.",
-        "inputs": [{"name": "file_path", "type": "string", "required": True}],
+        "inputs": [
+            {"name": "file_path", "type": "string", "required": True},
+            {"name": "start_line", "type": "integer", "required": False},
+            {"name": "line_count", "type": "integer", "required": False},
+        ],
         "response": "Diagnostics",
     },
     {
