@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from lean_lsp_mcp import utils
+from conftest import ensure_mcp_stub, load_module
+
+ensure_mcp_stub()
+utils = load_module("lean_lsp_mcp.utils")
 
 
 def test_normalize_range_converts_to_one_indexed():
@@ -43,4 +46,3 @@ def test_goal_to_payload_extracts_rendered_text():
     assert payload["rendered"] == "goal text"
     assert payload["goals"] == ["goal text"]
     assert payload["user_state"] == "state"
-

@@ -1,28 +1,25 @@
 from __future__ import annotations
 
-import os
-from typing import Any, Dict
+from conftest import load_module
 
-from lean_lsp_mcp.schema import make_response, SCHEMA_VERSION, RESPONSE_FORMAT_ENV
+schema = load_module("lean_lsp_mcp.schema")
 
 
 def test_make_response_structured(monkeypatch):
-    monkeypatch.delenv(RESPONSE_FORMAT_ENV, raising=False)
+    monkeypatch.delenv(schema.RESPONSE_FORMAT_ENV, raising=False)
     payload = {"value": 1}
-    response = make_response("ok", data=payload)
+    response = schema.make_response("ok", data=payload)
     assert response["status"] == "ok"
     assert response["data"] == payload
-    assert response["meta"]["schema_version"] == SCHEMA_VERSION
+    assert response["meta"]["schema_version"] == schema.SCHEMA_VERSION
 
 
 def test_make_response_legacy(monkeypatch):
-    monkeypatch.setenv(RESPONSE_FORMAT_ENV, "legacy")
+    monkeypatch.setenv(schema.RESPONSE_FORMAT_ENV, "legacy")
     payload = {"value": 2}
 
-    def formatter(envelope: Dict[str, Any]) -> str:
+    def formatter(envelope):
         return f"legacy:{envelope['data']['value']}"
 
-    response = make_response("ok", data=payload, legacy_formatter=formatter)
+    response = schema.make_response("ok", data=payload, legacy_formatter=formatter)
     assert response == "legacy:2"
-
-
