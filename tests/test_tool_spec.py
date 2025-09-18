@@ -1,23 +1,9 @@
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
+from conftest import load_from_src
 
-from conftest import ensure_mcp_stub
-
-ensure_mcp_stub()
-
-SRC = Path(__file__).resolve().parents[1] / "src" / "lean_lsp_mcp"
-
-schema_spec = importlib.util.spec_from_file_location("lean_lsp_mcp.schema", SRC / "schema.py")
-schema = importlib.util.module_from_spec(schema_spec)
-assert schema_spec.loader is not None
-schema_spec.loader.exec_module(schema)
-
-tool_spec_spec = importlib.util.spec_from_file_location("lean_lsp_mcp.tool_spec", SRC / "tool_spec.py")
-tool_spec = importlib.util.module_from_spec(tool_spec_spec)
-assert tool_spec_spec.loader is not None
-tool_spec_spec.loader.exec_module(tool_spec)
+schema = load_from_src("lean_lsp_mcp.schema")
+tool_spec = load_from_src("lean_lsp_mcp.tool_spec")
 
 
 def test_tool_spec_includes_expected_metadata():

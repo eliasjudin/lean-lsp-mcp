@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 import types
@@ -113,4 +114,17 @@ def ensure_mcp_stub() -> None:
     sys.modules.setdefault("leanclient", leanclient_pkg)
 
 
-__all__ = ["ensure_mcp_stub"]
+
+def load_from_src(module: str):
+    """Load a module from the src tree without executing package __init__."""
+
+    ensure_mcp_stub()
+    path = SRC / (module.replace(".", "/") + ".py")
+    spec = importlib.util.spec_from_file_location(module, path)
+    module_obj = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module_obj)
+    return module_obj
+
+
+__all__ = ["ensure_mcp_stub", "load_from_src"]

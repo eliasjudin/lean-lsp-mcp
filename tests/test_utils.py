@@ -1,17 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
+from conftest import load_from_src
 
-from conftest import ensure_mcp_stub
-
-ensure_mcp_stub()
-
-MODULE_PATH = Path(__file__).resolve().parents[1] / "src" / "lean_lsp_mcp" / "utils.py"
-spec = importlib.util.spec_from_file_location("lean_lsp_mcp.utils", MODULE_PATH)
-utils = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(utils)
+utils = load_from_src("lean_lsp_mcp.utils")
 
 
 def test_normalize_range_converts_to_one_indexed():
