@@ -110,14 +110,8 @@ if auth_token:
     mcp_kwargs["token_verifier"] = OptionalTokenVerifier(auth_token)
 
 mcp = FastMCP(**mcp_kwargs)
-
-
-def _legacy_payload(payload):
-    return lambda _response: payload
-
-
 def ok_response(data, meta=None, legacy_text=None):
-    formatter = _legacy_payload(legacy_text) if legacy_text is not None else None
+    formatter = legacy_text
     return make_response("ok", data=data, meta=meta, legacy_formatter=formatter)
 
 
@@ -125,7 +119,7 @@ def error_response(message: str, data=None, meta=None, legacy_text=None):
     payload = {"message": message}
     if data:
         payload.update(data)
-    formatter = _legacy_payload(legacy_text or message)
+    formatter = legacy_text or message
     return make_response("error", data=payload, meta=meta, legacy_formatter=formatter)
 
 
@@ -719,6 +713,7 @@ def multi_attempt(
         client.open_file(rel_path)
 
         results = []
+        legacy_texts: List[str] = []
         for snippet in snippets:
             payload = snippet if snippet.endswith("\n") else f"{snippet}\n"
             # Create a DocumentContentChange for the snippet
@@ -739,15 +734,11 @@ def multi_attempt(
                     "snippet": snippet,
                     "goal": goal_to_payload(goal),
                     "diagnostics": diagnostics_to_entries(diag, select_line=line - 1),
-                    "legacy_goal": formatted_goal,
-                    "legacy_diagnostics": formatted_diag,
                 }
             )
+            legacy_texts.append(f"{snippet}:\n {formatted_goal}\n\n{formatted_diag}")
 
-        legacy = [
-            f"{entry['snippet']}:\n {entry['legacy_goal']}\n\n{entry['legacy_diagnostics']}"
-            for entry in results
-        ]
+        legacy = legacy_texts
         payload = {
             "file": rel_path,
             "line": line,

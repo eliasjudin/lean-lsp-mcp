@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, MutableMapping
 SCHEMA_VERSION = "1.0.0"
 RESPONSE_FORMAT_ENV = "LEAN_LSP_MCP_RESPONSE_FORMAT"
 
-LegacyFormatter = Callable[[Dict[str, Any]], Any] | None
+LegacyFormatter = Callable[[Dict[str, Any]], Any] | str | None
 
 
 def _is_legacy_mode() -> bool:
@@ -43,6 +43,8 @@ def make_response(
     if _is_legacy_mode():
         if legacy_formatter is None:
             return data
+        if isinstance(legacy_formatter, str):
+            return legacy_formatter
         return legacy_formatter(envelope)
 
     return envelope

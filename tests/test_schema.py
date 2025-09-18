@@ -1,8 +1,17 @@
 from __future__ import annotations
 
-from conftest import load_module
+import importlib.util
+from pathlib import Path
 
-schema = load_module("lean_lsp_mcp.schema")
+from conftest import ensure_mcp_stub
+
+ensure_mcp_stub()
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "src" / "lean_lsp_mcp" / "schema.py"
+spec = importlib.util.spec_from_file_location("lean_lsp_mcp.schema", MODULE_PATH)
+schema = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(schema)
 
 
 def test_make_response_structured(monkeypatch):
