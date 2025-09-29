@@ -19,7 +19,11 @@ from mcp.server.auth.settings import AuthSettings
 from leanclient import LeanLSPClient, DocumentContentChange
 
 from lean_lsp_mcp.client_utils import setup_client_for_file, startup_client
-from lean_lsp_mcp.file_utils import get_file_contents, update_file
+from lean_lsp_mcp.file_utils import (
+    get_file_contents,
+    resolve_absolute_file_path,
+    update_file,
+)
 from lean_lsp_mcp.instructions import INSTRUCTIONS
 from lean_lsp_mcp.tool_spec import TOOL_SPEC_VERSION, build_tool_spec
 from lean_lsp_mcp.schema import make_response
@@ -27,11 +31,9 @@ from lean_lsp_mcp.schema_types import (
     ERROR_BAD_REQUEST,
     ERROR_CLIENT_NOT_READY,
     ERROR_INVALID_PATH,
-    ERROR_IO_FAILURE,
     ERROR_NO_GOAL,
     ERROR_NOT_GOAL_POSITION,
     ERROR_RATE_LIMIT,
-    ERROR_UNKNOWN,
 )
 from lean_lsp_mcp.utils import (
     OutputCapture,
@@ -176,7 +178,15 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            rate_limit = kwargs["ctx"].request_context.lifespan_context.rate_limit
+            ctx: Context | None = kwargs.get("ctx")
+            if ctx is None:
+                if not args:
+                    raise TypeError(
+                        "rate_limited tools must receive `ctx` as the first argument"
+                    )
+                ctx = args[0]
+
+            rate_limit = ctx.request_context.lifespan_context.rate_limit
             current_time = int(time.time())
             rate_limit[category] = [
                 timestamp
@@ -203,7 +213,8 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
             rate_limit[category].append(current_time)
             return func(*args, **kwargs)
 
-        wrapper.__doc__ = f"Limit: {max_requests}req/{per_seconds}s. " + wrapper.__doc__
+        original_doc = wrapper.__doc__ or ""
+        wrapper.__doc__ = f"Limit: {max_requests}req/{per_seconds}s. " + original_doc
         return wrapper
 
     return decorator
@@ -301,13 +312,20 @@ def file_contents(
     Returns:
         str: File content or error msg
     """
-    try:
-        data = get_file_contents(file_path)
-    except FileNotFoundError:
+    abs_path = resolve_absolute_file_path(ctx, file_path)
+    if abs_path is None:
         message = (
             f"File `{file_path}` does not exist. Please check the path and try again."
         )
         return error_response(message, data={"path": file_path}, code=ERROR_INVALID_PATH)
+
+    try:
+        data = get_file_contents(abs_path)
+    except FileNotFoundError:
+        message = (
+            f"File `{abs_path}` does not exist. Please check the path and try again."
+        )
+        return error_response(message, data={"path": abs_path}, code=ERROR_INVALID_PATH)
 
     if start_line is not None and start_line < 1:
         return error_response(
@@ -355,7 +373,7 @@ def file_contents(
             for idx, line in enumerate(slice_lines)
         ]
         payload = {
-            "path": file_path,
+            "path": abs_path,
             "annotated": True,
             "lines": payload_lines,
         }
@@ -368,7 +386,7 @@ def file_contents(
 
     slice_text = "\n".join(slice_lines)
     payload = {
-        "path": file_path,
+        "path": abs_path,
         "annotated": False,
         "contents": slice_text,
         "start_line": start,

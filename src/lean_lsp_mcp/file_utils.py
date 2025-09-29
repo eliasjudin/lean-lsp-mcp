@@ -43,6 +43,45 @@ def get_file_contents(abs_path: str) -> str:
         return f.read()
 
 
+def resolve_absolute_file_path(ctx: Context, file_path: str) -> Optional[str]:
+    """Resolve ``file_path`` to an absolute path using the current context.
+
+    This accepts absolute paths, project-relative paths and paths relative to the
+    current working directory. It also consults any cached project roots the
+    server discovered while handling previous requests.
+    """
+
+    normalized_path = os.path.expanduser(file_path.strip())
+    if not normalized_path:
+        return None
+
+    candidates: list[str] = [normalized_path]
+
+    lifespan = getattr(getattr(ctx, "request_context", None), "lifespan_context", None)
+    if lifespan is not None:
+        lean_project_path = getattr(lifespan, "lean_project_path", None)
+        if lean_project_path:
+            candidates.append(os.path.join(lean_project_path, normalized_path))
+        project_cache = getattr(lifespan, "project_cache", None) or {}
+        if project_cache and not os.path.isabs(normalized_path):
+            for root in project_cache.values():
+                if root:
+                    candidates.append(os.path.join(root, normalized_path))
+
+    if not os.path.isabs(normalized_path):
+        candidates.append(os.path.join(os.getcwd(), normalized_path))
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        abs_candidate = os.path.abspath(candidate)
+        if abs_candidate in seen:
+            continue
+        seen.add(abs_candidate)
+        if os.path.exists(abs_candidate):
+            return abs_candidate
+    return None
+
+
 def update_file(ctx: Context, rel_path: str) -> str:
     """Update the file contents in the context.
     Args:
