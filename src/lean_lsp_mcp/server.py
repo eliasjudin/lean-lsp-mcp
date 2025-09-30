@@ -1307,7 +1307,8 @@ def state_search(
             legacy_text=message,
         )
 
-    goal = urllib.parse.quote(goal_state["goals"][0])
+    goal_text = goal_state["goals"][0]
+    goal = urllib.parse.quote(goal_text)
 
     try:
         url = os.getenv("LEAN_STATE_SEARCH_URL", "https://premise-search.com")
@@ -1325,7 +1326,7 @@ def state_search(
         payload = {
             "file": rel_path,
             "position": {"line": line, "column": column},
-            "query": goal,
+            "query": goal_text,
             "results": results,
             "count": len(results),
         }

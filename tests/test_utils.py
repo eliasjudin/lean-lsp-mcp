@@ -58,3 +58,92 @@ def test_compute_pagination_defaults_to_full_range():
     start, end, meta = utils.compute_pagination(5, None, None)
     assert (start, end) == (1, 5)
     assert meta["has_more"] is False
+
+
+def test_format_diagnostics_includes_severity_source_and_code():
+    diagnostics = [
+        {
+            "message": "undefined identifier",
+            "severity": 1,
+            "range": {
+                "start": {"line": 2, "character": 4},
+                "end": {"line": 2, "character": 9},
+            },
+            "source": "elaborator",
+            "code": "unknownId",
+            "file": "src/Foo.lean",
+        }
+    ]
+
+    formatted = utils.format_diagnostics(diagnostics)
+    assert formatted == [
+        "[Error] src/Foo.lean:3:5-3:10 (elaborator#unknownId)\nundefined identifier"
+    ]
+
+
+def test_format_diagnostics_indents_related_information():
+    diagnostics = [
+        {
+            "message": "unused variable",
+            "severity": 2,
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 0, "character": 6},
+            },
+            "source": "linter",
+            "code": "unused",
+            "relatedInformation": [
+                {
+                    "message": "introduced here",
+                    "location": {
+                        "uri": "file:///tmp/Bar.lean",
+                        "range": {
+                            "start": {"line": 10, "character": 2},
+                            "end": {"line": 10, "character": 5},
+                        },
+                    },
+                }
+            ],
+        }
+    ]
+
+    formatted = utils.format_diagnostics(diagnostics)
+    assert formatted[0].startswith("[Warning] 1:1-1:7 (linter#unused)\nunused variable")
+    assert "  /tmp/Bar.lean:11:3-11:6" in formatted[0]
+    assert "  introduced here" in formatted[0]
+
+
+def test_format_diagnostics_filters_by_line():
+    diagnostics = [
+        {
+            "message": "first",
+            "severity": 3,
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 0, "character": 1},
+            },
+        },
+        {
+            "message": "second",
+            "severity": 3,
+            "range": {
+                "start": {"line": 5, "character": 0},
+                "end": {"line": 5, "character": 1},
+            },
+        },
+    ]
+
+    formatted = utils.format_diagnostics(diagnostics, select_line=0)
+    assert formatted == ["[Info] 1:1-1:2\nfirst"]
+
+
+def test_format_diagnostics_handles_missing_range():
+    diagnostics = [
+        {
+            "message": "internal error",
+            "severity": 1,
+        }
+    ]
+
+    formatted = utils.format_diagnostics(diagnostics)
+    assert formatted == ["[Error] No range\ninternal error"]
