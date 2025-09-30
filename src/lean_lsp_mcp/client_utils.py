@@ -114,9 +114,6 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
                     project_cache[visited] = lean_project_path
                 startup_client(ctx)
                 break
-        elif file_dir in project_cache:
-            # Negative cache entry, skip expensive checks
-            pass
         elif valid_lean_project_path(file_dir):
             lean_project_path = file_dir
             rel_path = get_relative_file_path(lean_project_path, file_path)
