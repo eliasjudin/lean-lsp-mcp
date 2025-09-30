@@ -1229,7 +1229,7 @@ def loogle(ctx: Context, query: str, num_results: int = 8) -> Any:
 
         results = results["hits"][:num_results]
         for result in results:
-            result.pop("doc")
+            result.pop("doc", None)
         payload = {
             "query": query,
             "results": results,
