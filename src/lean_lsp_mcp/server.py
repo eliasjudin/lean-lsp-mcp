@@ -823,7 +823,14 @@ def run_code(ctx: Context, code: str) -> Any:
             os.remove(abs_path)
         except Exception:
             pass
-        return "Lean client is not available. Run another tool to initialize the project first."
+        message = (
+            "Lean client is not available. Run another tool to initialize the project first."
+        )
+        return error_response(
+            "Lean client is not available",
+            data={"path": abs_path},
+            legacy_text=message,
+        )
 
     diagnostics_payload: List[Dict[str, Any]] | None = None
     legacy_diagnostics: List[str] | str | None = None
