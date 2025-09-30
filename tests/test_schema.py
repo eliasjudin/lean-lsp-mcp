@@ -31,3 +31,21 @@ def test_error_response_sets_code():
     assert response["status"] == "error"
     assert response["data"]["message"] == "boom"
     assert response["meta"]["error"]["code"] == "sample"
+
+
+def test_ok_response_non_callable_legacy_payload(monkeypatch):
+    monkeypatch.setenv(schema.RESPONSE_FORMAT_ENV, "legacy")
+    payload = {"value": 3}
+    legacy = ["line1", "line2"]
+
+    response = server.ok_response(payload, legacy_text=legacy)
+
+    assert response == legacy
+
+
+def test_error_response_non_callable_legacy_payload(monkeypatch):
+    monkeypatch.setenv(schema.RESPONSE_FORMAT_ENV, "legacy")
+
+    response = server.error_response("boom", legacy_text=["legacy", "boom"])
+
+    assert response == ["legacy", "boom"]

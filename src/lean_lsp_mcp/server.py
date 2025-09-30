@@ -139,8 +139,20 @@ def client_session(ctx: Context):
     finally:
         lock.release()
 
+def _normalize_legacy_formatter(legacy_text):
+    if legacy_text is None or isinstance(legacy_text, str) or callable(legacy_text):
+        return legacy_text
+
+    payload = legacy_text
+
+    def constant_formatter(_envelope, result=payload):
+        return result
+
+    return constant_formatter
+
+
 def ok_response(data, meta=None, legacy_text=None):
-    formatter = legacy_text
+    formatter = _normalize_legacy_formatter(legacy_text)
     return make_response("ok", data=data, meta=meta, legacy_formatter=formatter)
 
 
@@ -155,7 +167,7 @@ def error_response(
     payload = {"message": message}
     if data:
         payload.update(data)
-    formatter = legacy_text or message
+    formatter = _normalize_legacy_formatter(legacy_text or message)
     meta_payload = dict(meta) if meta else {}
     if code:
         existing_error = meta_payload.get("error")
