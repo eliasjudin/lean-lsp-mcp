@@ -6,29 +6,28 @@ from leanclient import LeanLSPClient
 
 
 def get_relative_file_path(lean_project_path: str, file_path: str) -> Optional[str]:
-    """Convert path relative to project path.
+    """Convert a path to project-relative if it stays within the project root."""
 
-    Args:
-        lean_project_path (str): Path to the Lean project root.
-        file_path (str): File path.
+    project_root = os.path.abspath(lean_project_path)
+    candidates = []
 
-    Returns:
-        str: Relative file path.
-    """
-    # Check if absolute path
     if os.path.exists(file_path):
-        return os.path.relpath(file_path, lean_project_path)
+        candidates.append(os.path.abspath(file_path))
 
-    # Check if relative to project path
-    path = os.path.join(lean_project_path, file_path)
-    if os.path.exists(path):
-        return os.path.relpath(path, lean_project_path)
+    project_candidate = os.path.join(project_root, file_path)
+    if os.path.exists(project_candidate):
+        candidates.append(os.path.abspath(project_candidate))
 
-    # Check if relative to CWD
-    cwd = os.getcwd().strip()  # Strip necessary?
-    path = os.path.join(cwd, file_path)
-    if os.path.exists(path):
-        return os.path.relpath(path, lean_project_path)
+    cwd_candidate = os.path.join(os.getcwd().strip(), file_path)
+    if os.path.exists(cwd_candidate):
+        candidates.append(os.path.abspath(cwd_candidate))
+
+    for abs_path in candidates:
+        try:
+            if os.path.commonpath([abs_path, project_root]) == project_root:
+                return os.path.relpath(abs_path, project_root)
+        except ValueError:
+            continue
 
     return None
 
@@ -78,6 +77,6 @@ def update_file(ctx: Context, rel_path: str) -> str:
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
     try:
         client.close_files([rel_path])
-    except Exception as e:
+    except Exception:
         pass
     return file_content

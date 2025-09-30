@@ -1,7 +1,7 @@
 import os
 import re
 import time
-from typing import List, Optional, Dict
+from typing import Any, Dict, List, Optional
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -9,23 +9,30 @@ import urllib
 import json
 import functools
 import subprocess
+import uuid
+from types import SimpleNamespace
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.utilities.logging import get_logger
 from mcp.server.auth.settings import AuthSettings
 from leanclient import LeanLSPClient, DocumentContentChange
 
-from lean_lsp_mcp.client_utils import setup_client_for_file
+from lean_lsp_mcp.client_utils import setup_client_for_file, startup_client
 from lean_lsp_mcp.file_utils import get_file_contents, update_file
 from lean_lsp_mcp.instructions import INSTRUCTIONS
+from lean_lsp_mcp.tool_spec import TOOL_SPEC_VERSION, build_tool_spec
+from lean_lsp_mcp.schema import make_response
 from lean_lsp_mcp.utils import (
     OutputCapture,
+    diagnostics_to_entries,
     extract_range,
     filter_diagnostics_by_position,
     find_start_position,
     format_diagnostics,
     format_goal,
     format_line,
+    goal_to_payload,
+    normalize_range,
     OptionalTokenVerifier,
 )
 
@@ -40,6 +47,7 @@ class AppContext:
     client: LeanLSPClient | None
     file_content_hashes: Dict[str, str]
     rate_limit: Dict[str, List[int]]
+    project_cache: Dict[str, str]
 
 
 @asynccontextmanager
@@ -61,7 +69,23 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
                 "lean_state_search": [],
                 "hammer_premise": [],
             },
+            project_cache={},
         )
+        if context.lean_project_path:
+            try:
+                logger.info(
+                    "Prewarming Lean client for %s", context.lean_project_path
+                )
+                dummy_ctx = SimpleNamespace(
+                    request_context=SimpleNamespace(lifespan_context=context)
+                )
+                startup_client(dummy_ctx)
+            except Exception as exc:  # pragma: no cover - prewarm best effort
+                logger.warning(
+                    "Lean client prewarm failed for %s: %s",
+                    context.lean_project_path,
+                    exc,
+                )
         yield context
     finally:
         logger.info("Closing Lean LSP client")
@@ -88,6 +112,23 @@ if auth_token:
 mcp = FastMCP(**mcp_kwargs)
 
 
+def _legacy_payload(payload):
+    return lambda _response: payload
+
+
+def ok_response(data, meta=None, legacy_text=None):
+    formatter = _legacy_payload(legacy_text) if legacy_text is not None else None
+    return make_response("ok", data=data, meta=meta, legacy_formatter=formatter)
+
+
+def error_response(message: str, data=None, meta=None, legacy_text=None):
+    payload = {"message": message}
+    if data:
+        payload.update(data)
+    formatter = _legacy_payload(legacy_text or message)
+    return make_response("error", data=payload, meta=meta, legacy_formatter=formatter)
+
+
 # Rate limiting: n requests per m seconds
 def rate_limited(category: str, max_requests: int, per_seconds: int):
     def decorator(func):
@@ -101,7 +142,16 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
                 if timestamp > current_time - per_seconds
             ]
             if len(rate_limit[category]) >= max_requests:
-                return f"Tool limit exceeded: {max_requests} requests per {per_seconds} s. Try again later."
+                message = (
+                    f"Tool limit exceeded: {max_requests} requests per {per_seconds} s."
+                    " Try again later."
+                )
+                return make_response(
+                    "error",
+                    data={"message": message, "category": category},
+                    meta={"rate_limit": {"max_requests": max_requests, "per_seconds": per_seconds}},
+                    legacy_formatter=lambda _: message,
+                )
             rate_limit[category].append(current_time)
             return func(*args, **kwargs)
 
@@ -113,7 +163,7 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
 
 # Project level tools
 @mcp.tool("lean_build")
-def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) -> str:
+def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) -> Any:
     """Build the Lean project and restart the LSP Server.
 
     Use only if needed (e.g. new imports).
@@ -130,6 +180,13 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) 
     else:
         lean_project_path = os.path.abspath(lean_project_path)
         ctx.request_context.lifespan_context.lean_project_path = lean_project_path
+
+    if not lean_project_path:
+        message = (
+            "No Lean project path configured. Provide `lean_project_path` or set "
+            "`LEAN_PROJECT_PATH`."
+        )
+        return error_response(message)
 
     build_output = ""
     try:
@@ -152,14 +209,33 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) 
 
         ctx.request_context.lifespan_context.client = client
         build_output = output.get_output()
-        return build_output
+        return ok_response(
+            data={
+                "project_path": lean_project_path,
+                "output": build_output,
+                "clean": clean,
+            },
+            meta={"operation": "build"},
+            legacy_text=build_output,
+        )
     except Exception as e:
-        return f"Error during build:\n{str(e)}\n{build_output}"
+        error_text = f"Error during build:\n{str(e)}\n{build_output}"
+        return error_response(
+            "Error during build",
+            data={
+                "error": str(e),
+                "output": build_output,
+                "project_path": lean_project_path,
+                "clean": clean,
+            },
+            meta={"operation": "build"},
+            legacy_text=error_text,
+        )
 
 
 # File level tools
 @mcp.tool("lean_file_contents")
-def file_contents(ctx: Context, file_path: str, annotate_lines: bool = True) -> str:
+def file_contents(ctx: Context, file_path: str, annotate_lines: bool = True) -> Any:
     """Get the text contents of a Lean file, optionally with line numbers.
 
     Args:
@@ -172,23 +248,32 @@ def file_contents(ctx: Context, file_path: str, annotate_lines: bool = True) -> 
     try:
         data = get_file_contents(file_path)
     except FileNotFoundError:
-        return (
+        message = (
             f"File `{file_path}` does not exist. Please check the path and try again."
         )
+        return error_response(message, data={"path": file_path})
 
     if annotate_lines:
-        data = data.split("\n")
-        max_digits = len(str(len(data)))
+        lines = data.split("\n")
+        payload = {
+            "path": file_path,
+            "annotated": True,
+            "lines": [{"number": i + 1, "text": line} for i, line in enumerate(lines)],
+        }
+
+        max_digits = len(str(len(lines)))
         annotated = ""
-        for i, line in enumerate(data):
+        for i, line in enumerate(lines):
             annotated += f"{i + 1}{' ' * (max_digits - len(str(i + 1)))}: {line}\n"
-        return annotated
-    else:
-        return data
+
+        return ok_response(payload, legacy_text=annotated)
+
+    payload = {"path": file_path, "annotated": False, "contents": data}
+    return ok_response(payload, legacy_text=data)
 
 
 @mcp.tool("lean_diagnostic_messages")
-def diagnostic_messages(ctx: Context, file_path: str) -> List[str] | str:
+def diagnostic_messages(ctx: Context, file_path: str) -> Any:
     """Get all diagnostic msgs (errors, warnings, infos) for a Lean file.
 
     "no goals to be solved" means code may need removal.
@@ -201,17 +286,23 @@ def diagnostic_messages(ctx: Context, file_path: str) -> List[str] | str:
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(message, data={"file_path": file_path})
 
     update_file(ctx, rel_path)
 
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
     diagnostics = client.get_diagnostics(rel_path)
-    return format_diagnostics(diagnostics)
+    legacy = format_diagnostics(diagnostics)
+    payload = {
+        "file": rel_path,
+        "diagnostics": diagnostics_to_entries(diagnostics),
+    }
+    return ok_response(payload, legacy_text=legacy)
 
 
 @mcp.tool("lean_goal")
-def goal(ctx: Context, file_path: str, line: int, column: Optional[int] = None) -> str:
+def goal(ctx: Context, file_path: str, line: int, column: Optional[int] = None) -> Any:
     """Get the proof goals (proof state) at a specific location in a Lean file.
 
     VERY USEFUL! Main tool to understand the proof state and its evolution!
@@ -229,7 +320,8 @@ def goal(ctx: Context, file_path: str, line: int, column: Optional[int] = None) 
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(message, data={"file_path": file_path, "line": line, "column": column})
 
     content = update_file(ctx, rel_path)
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
@@ -237,7 +329,12 @@ def goal(ctx: Context, file_path: str, line: int, column: Optional[int] = None) 
     if column is None:
         lines = content.splitlines()
         if line < 1 or line > len(lines):
-            return "Line number out of range. Try elsewhere?"
+            message = "Line number out of range. Try elsewhere?"
+            return error_response(
+                message,
+                data={"file": rel_path, "line": line},
+                legacy_text=message,
+            )
         column_end = len(lines[line - 1])
         column_start = next(
             (i for i, c in enumerate(lines[line - 1]) if not c.isspace()), 0
@@ -246,23 +343,60 @@ def goal(ctx: Context, file_path: str, line: int, column: Optional[int] = None) 
         goal_end = client.get_goal(rel_path, line - 1, column_end)
 
         if goal_start is None and goal_end is None:
-            return f"No goals on line:\n{lines[line - 1]}\nTry another line?"
+            line_text = lines[line - 1]
+            message = f"No goals on line:\n{line_text}\nTry another line?"
+            return error_response(
+                "No goals on line",
+                data={"file": rel_path, "line": line, "line_text": line_text},
+                legacy_text=message,
+            )
 
+        payload = {
+            "file": rel_path,
+            "request": {"line": line, "column": None},
+            "line": lines[line - 1],
+            "results": [
+                {"position": "line_start", "goal": goal_to_payload(goal_start)},
+                {"position": "line_end", "goal": goal_to_payload(goal_end)},
+            ],
+        }
         start_text = format_goal(goal_start, "No goals at line start.")
         end_text = format_goal(goal_end, "No goals at line end.")
-        return f"Goals on line:\n{lines[line - 1]}\nBefore:\n{start_text}\nAfter:\n{end_text}"
+        legacy = (
+            "Goals on line:\n"
+            f"{lines[line - 1]}\n"
+            f"Before:\n{start_text}\nAfter:\n{end_text}"
+        )
+        return ok_response(payload, legacy_text=legacy)
 
     else:
         goal = client.get_goal(rel_path, line - 1, column - 1)
-        f_goal = format_goal(goal, f"Not a valid goal position. Try elsewhere?")
+        f_goal = format_goal(goal, "Not a valid goal position. Try elsewhere?")
         f_line = format_line(content, line, column)
-        return f"Goals at:\n{f_line}\n{f_goal}"
+        if goal is None:
+            message = f"Goals at:\n{f_line}\n{f_goal}"
+            return error_response(
+                "Not a valid goal position",
+                data={"file": rel_path, "line": line, "column": column},
+                legacy_text=message,
+            )
+
+        payload = {
+            "file": rel_path,
+            "request": {"line": line, "column": column},
+            "position": {"line": line, "column": column},
+            "goal": goal_to_payload(goal),
+            "line": format_line(content, line, None),
+            "line_with_cursor": f_line,
+        }
+        legacy = f"Goals at:\n{f_line}\n{f_goal}"
+        return ok_response(payload, legacy_text=legacy)
 
 
 @mcp.tool("lean_term_goal")
 def term_goal(
     ctx: Context, file_path: str, line: int, column: Optional[int] = None
-) -> str:
+) -> Any:
     """Get the expected type (term goal) at a specific location in a Lean file.
 
     Args:
@@ -275,28 +409,49 @@ def term_goal(
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(
+            message,
+            data={"file_path": file_path, "line": line, "column": column},
+        )
 
     content = update_file(ctx, rel_path)
     if column is None:
         lines = content.splitlines()
         if line < 1 or line > len(lines):
-            return "Line number out of range. Try elsewhere?"
+            message = "Line number out of range. Try elsewhere?"
+            return error_response(
+                message, data={"file": rel_path, "line": line}, legacy_text=message
+            )
         column = len(content.splitlines()[line - 1])
 
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
     term_goal = client.get_term_goal(rel_path, line - 1, column - 1)
     f_line = format_line(content, line, column)
     if term_goal is None:
-        return f"Not a valid term goal position:\n{f_line}\nTry elsewhere?"
+        message = f"Not a valid term goal position:\n{f_line}\nTry elsewhere?"
+        return error_response(
+            "Not a valid term goal position",
+            data={"file": rel_path, "line": line, "column": column},
+            legacy_text=message,
+        )
     rendered = term_goal.get("goal", None)
     if rendered is not None:
         rendered = rendered.replace("```lean\n", "").replace("\n```", "")
-    return f"Term goal at:\n{f_line}\n{rendered or 'No term goal found.'}"
+    payload = {
+        "file": rel_path,
+        "position": {"line": line, "column": column},
+        "line": format_line(content, line, None),
+        "line_with_cursor": f_line,
+        "rendered": rendered,
+        "raw": term_goal,
+    }
+    legacy = f"Term goal at:\n{f_line}\n{rendered or 'No term goal found.'}"
+    return ok_response(payload, legacy_text=legacy)
 
 
 @mcp.tool("lean_hover_info")
-def hover(ctx: Context, file_path: str, line: int, column: int) -> str:
+def hover(ctx: Context, file_path: str, line: int, column: int) -> Any:
     """Get hover info (docs for syntax, variables, functions, etc.) at a specific location in a Lean file.
 
     Args:
@@ -309,14 +464,23 @@ def hover(ctx: Context, file_path: str, line: int, column: int) -> str:
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(
+            message,
+            data={"file_path": file_path, "line": line, "column": column},
+        )
 
     file_content = update_file(ctx, rel_path)
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
     hover_info = client.get_hover(rel_path, line - 1, column - 1)
     if hover_info is None:
         f_line = format_line(file_content, line, column)
-        return f"No hover information at position:\n{f_line}\nTry elsewhere?"
+        message = f"No hover information at position:\n{f_line}\nTry elsewhere?"
+        return error_response(
+            "No hover information",
+            data={"file": rel_path, "line": line, "column": column},
+            legacy_text=message,
+        )
 
     # Get the symbol and the hover information
     h_range = hover_info.get("range")
@@ -328,16 +492,24 @@ def hover(ctx: Context, file_path: str, line: int, column: int) -> str:
     diagnostics = client.get_diagnostics(rel_path)
     filtered = filter_diagnostics_by_position(diagnostics, line - 1, column - 1)
 
-    msg = f"Hover info `{symbol}`:\n{info}"
+    payload = {
+        "file": rel_path,
+        "position": {"line": line, "column": column},
+        "symbol": symbol,
+        "range": normalize_range(h_range),
+        "info": info,
+        "diagnostics": diagnostics_to_entries(filtered),
+    }
+    legacy = f"Hover info `{symbol}`:\n{info}"
     if filtered:
-        msg += "\n\nDiagnostics\n" + "\n".join(format_diagnostics(filtered))
-    return msg
+        legacy += "\n\nDiagnostics\n" + "\n".join(format_diagnostics(filtered))
+    return ok_response(payload, legacy_text=legacy)
 
 
 @mcp.tool("lean_completions")
 def completions(
     ctx: Context, file_path: str, line: int, column: int, max_completions: int = 32
-) -> str:
+) -> Any:
     """Get code completions at a location in a Lean file.
 
     Only use this on INCOMPLETE lines/statements to check available identifiers and imports:
@@ -356,7 +528,11 @@ def completions(
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(
+            message,
+            data={"file_path": file_path, "line": line, "column": column},
+        )
     content = update_file(ctx, rel_path)
 
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
@@ -365,7 +541,12 @@ def completions(
     f_line = format_line(content, line, column)
 
     if not formatted:
-        return f"No completions at position:\n{f_line}\nTry elsewhere?"
+        message = f"No completions at position:\n{f_line}\nTry elsewhere?"
+        return error_response(
+            "No completions",
+            data={"file": rel_path, "line": line, "column": column},
+            legacy_text=message,
+        )
 
     # Find the sort term: The last word/identifier before the cursor
     lines = content.splitlines()
@@ -398,11 +579,36 @@ def completions(
             f"{remaining} more, keep typing to filter further"
         ]
     completions_text = "\n".join(formatted)
-    return f"Completions at:\n{f_line}\n{completions_text}"
+
+    suggestions = []
+    for item in completions[:max_completions]:
+        entry = {"label": item.get("label")}
+        for field in ("detail", "kind", "sortText"):
+            if field in item and item[field] is not None:
+                entry[field] = item[field]
+        suggestions.append(entry)
+    if len(completions) > max_completions:
+        suggestions.append(
+            {
+                "label": "additional",
+                "detail": f"{len(completions) - max_completions} more",
+            }
+        )
+
+    payload = {
+        "file": rel_path,
+        "position": {"line": line, "column": column},
+        "prefix": prefix,
+        "suggestions": suggestions,
+        "line": format_line(content, line, None),
+        "line_with_cursor": f_line,
+    }
+
+    return ok_response(payload, legacy_text=f"Completions at:\n{f_line}\n{completions_text}")
 
 
 @mcp.tool("lean_declaration_file")
-def declaration_file(ctx: Context, file_path: str, symbol: str) -> str:
+def declaration_file(ctx: Context, file_path: str, symbol: str) -> Any:
     """Get the file contents where a symbol/lemma/class/structure is declared.
 
     Note:
@@ -418,13 +624,24 @@ def declaration_file(ctx: Context, file_path: str, symbol: str) -> str:
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(
+            message, data={"file_path": file_path, "symbol": symbol}
+        )
     orig_file_content = update_file(ctx, rel_path)
 
     # Find the first occurence of the symbol (line and column) in the file,
     position = find_start_position(orig_file_content, symbol)
     if not position:
-        return f"Symbol `{symbol}` (case sensitive) not found in file `{rel_path}`. Add it first, then try again."
+        message = (
+            f"Symbol `{symbol}` (case sensitive) not found in file `{rel_path}`. Add it first,"
+            " then try again."
+        )
+        return error_response(
+            f"Symbol `{symbol}` not found",
+            data={"file": rel_path, "symbol": symbol},
+            legacy_text=message,
+        )
 
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
     declaration = client.get_declarations(
@@ -432,7 +649,10 @@ def declaration_file(ctx: Context, file_path: str, symbol: str) -> str:
     )
 
     if len(declaration) == 0:
-        return f"No declaration available for `{symbol}`."
+        message = f"No declaration available for `{symbol}`."
+        return error_response(
+            message, data={"file": rel_path, "symbol": symbol}, legacy_text=message
+        )
 
     # Load the declaration file
     declaration = declaration[0]
@@ -442,17 +662,32 @@ def declaration_file(ctx: Context, file_path: str, symbol: str) -> str:
 
     abs_path = client._uri_to_abs(uri)
     if not os.path.exists(abs_path):
-        return f"Could not open declaration file `{abs_path}` for `{symbol}`."
+        message = f"Could not open declaration file `{abs_path}` for `{symbol}`."
+        return error_response(
+            message,
+            data={"symbol": symbol, "path": abs_path},
+            legacy_text=message,
+        )
 
     file_content = get_file_contents(abs_path)
 
-    return f"Declaration of `{symbol}`:\n{file_content}"
+    payload = {
+        "symbol": symbol,
+        "origin_file": rel_path,
+        "declaration": {
+            "uri": uri,
+            "path": abs_path,
+            "contents": file_content,
+        },
+    }
+    legacy = f"Declaration of `{symbol}`:\n{file_content}"
+    return ok_response(payload, legacy_text=legacy)
 
 
 @mcp.tool("lean_multi_attempt")
 def multi_attempt(
     ctx: Context, file_path: str, line: int, snippets: List[str]
-) -> List[str] | str:
+) -> Any:
     """Try multiple Lean code snippets at a line and get the goal state and diagnostics for each.
 
     Use to compare tactics or approaches.
@@ -473,35 +708,68 @@ def multi_attempt(
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(
+            message, data={"file_path": file_path, "line": line, "snippets": snippets}
+        )
     update_file(ctx, rel_path)
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
 
-    client.open_file(rel_path)
+    try:
+        client.open_file(rel_path)
 
-    results = []
-    snippets[0] += "\n"  # Extra newline for the first snippet
-    for snippet in snippets:
-        # Create a DocumentContentChange for the snippet
-        change = DocumentContentChange(
-            snippet + "\n",
-            [line - 1, 0],
-            [line, 0],
-        )
-        # Apply the change to the file, capture diagnostics and goal state
-        diag = client.update_file(rel_path, [change])
-        formatted_diag = "\n".join(format_diagnostics(diag, select_line=line - 1))
-        goal = client.get_goal(rel_path, line - 1, len(snippet))
-        formatted_goal = format_goal(goal, "Missing goal")
-        results.append(f"{snippet}:\n {formatted_goal}\n\n{formatted_diag}")
+        results = []
+        for snippet in snippets:
+            payload = snippet if snippet.endswith("\n") else f"{snippet}\n"
+            # Create a DocumentContentChange for the snippet
+            change = DocumentContentChange(
+                payload,
+                [line - 1, 0],
+                [line, 0],
+            )
+            # Apply the change to the file, capture diagnostics and goal state
+            diag = client.update_file(rel_path, [change])
+            formatted_diag = "\n".join(
+                format_diagnostics(diag, select_line=line - 1)
+            )
+            goal = client.get_goal(rel_path, line - 1, len(snippet))
+            formatted_goal = format_goal(goal, "Missing goal")
+            results.append(
+                {
+                    "snippet": snippet,
+                    "goal": goal_to_payload(goal),
+                    "diagnostics": diagnostics_to_entries(diag, select_line=line - 1),
+                    "legacy_goal": formatted_goal,
+                    "legacy_diagnostics": formatted_diag,
+                }
+            )
 
-    # Make sure it's clean after the attempts
-    client.close_files([rel_path])
-    return results
+        legacy = [
+            f"{entry['snippet']}:\n {entry['legacy_goal']}\n\n{entry['legacy_diagnostics']}"
+            for entry in results
+        ]
+        payload = {
+            "file": rel_path,
+            "line": line,
+            "attempts": [
+                {
+                    "snippet": entry["snippet"],
+                    "goal": entry["goal"],
+                    "diagnostics": entry["diagnostics"],
+                }
+                for entry in results
+            ],
+        }
+        return ok_response(payload, legacy_text=legacy)
+    finally:
+        try:
+            client.close_files([rel_path])
+        except Exception as exc:  # pragma: no cover - close failures only logged
+            logger.warning("Failed to close `%s` after multi_attempt: %s", rel_path, exc)
 
 
 @mcp.tool("lean_run_code")
-def run_code(ctx: Context, code: str) -> List[str] | str:
+def run_code(ctx: Context, code: str) -> Any:
     """Run a complete, self-contained code snippet and return diagnostics.
 
     Has to include all imports and definitions!
@@ -515,36 +783,121 @@ def run_code(ctx: Context, code: str) -> List[str] | str:
     """
     lean_project_path = ctx.request_context.lifespan_context.lean_project_path
     if lean_project_path is None:
-        return "No valid Lean project path found. Run another tool (e.g. `lean_diagnostic_messages`) first to set it up or set the LEAN_PROJECT_PATH environment variable."
+        message = (
+            "No valid Lean project path found. Run another tool (e.g. `lean_diagnostic_messages`) first to set it up or set the LEAN_PROJECT_PATH environment variable."
+        )
+        return error_response(message, data={"code": code})
 
-    rel_path = "temp_snippet.lean"
+    rel_path = f"_mcp_snippet_{uuid.uuid4().hex}.lean"
     abs_path = os.path.join(lean_project_path, rel_path)
 
     try:
         with open(abs_path, "w") as f:
             f.write(code)
     except Exception as e:
-        return f"Error writing code snippet to file `{abs_path}`:\n{str(e)}"
+        message = f"Error writing code snippet to file `{abs_path}`:\n{str(e)}"
+        return error_response(
+            "Error writing code snippet",
+            data={"path": abs_path, "error": str(e)},
+            legacy_text=message,
+        )
 
-    client: LeanLSPClient = ctx.request_context.lifespan_context.client
-    diagnostics = format_diagnostics(client.get_diagnostics(rel_path))
-    client.close_files([rel_path])
+    # Ensure a Lean client is ready before asking for diagnostics.
+    try:
+        startup_client(ctx)
+    except Exception as e:
+        try:
+            os.remove(abs_path)
+        except Exception:
+            pass
+        message = f"Error starting Lean client for `{rel_path}`:\n{str(e)}"
+        return error_response(
+            "Error starting Lean client",
+            data={"path": abs_path, "error": str(e)},
+            legacy_text=message,
+        )
+
+    client: LeanLSPClient | None = ctx.request_context.lifespan_context.client
+    if client is None:
+        try:
+            os.remove(abs_path)
+        except Exception:
+            pass
+        message = (
+            "Lean client is not available. Run another tool to initialize the project first."
+        )
+        return error_response(
+            "Lean client is not available",
+            data={"path": abs_path},
+            legacy_text=message,
+        )
+
+    diagnostics_payload: List[Dict[str, Any]] | None = None
+    legacy_diagnostics: List[str] | str | None = None
+    close_error: str | None = None
+    remove_error: str | None = None
 
     try:
-        os.remove(abs_path)
-    except Exception as e:
-        return f"Error removing temporary file `{abs_path}`:\n{str(e)}"
+        client.open_file(rel_path)
+        raw_diagnostics = client.get_diagnostics(rel_path)
+        diagnostics_payload = diagnostics_to_entries(raw_diagnostics)
+        legacy_diagnostics = format_diagnostics(raw_diagnostics)
+    finally:
+        try:
+            client.close_files([rel_path])
+        except Exception as exc:  # pragma: no cover - close failures only logged
+            close_error = str(exc)
+            logger.warning(
+                "Failed to close `%s` after run_code: %s", rel_path, exc
+            )
+        try:
+            os.remove(abs_path)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            remove_error = str(e)
+            logger.warning(
+                "Failed to remove temporary Lean snippet `%s`: %s", abs_path, e
+            )
 
-    return (
-        diagnostics
-        if diagnostics
+    if remove_error:
+        return error_response(
+            f"Error removing temporary file `{abs_path}`",
+            data={"path": abs_path, "error": remove_error},
+            legacy_text=f"Error removing temporary file `{abs_path}`:\n{remove_error}",
+        )
+    if close_error:
+        return error_response(
+            f"Error closing temporary Lean document `{rel_path}`",
+            data={"path": abs_path, "error": close_error},
+            legacy_text=f"Error closing temporary Lean document `{rel_path}`:\n{close_error}",
+        )
+
+    payload = {
+        "snippet_path": rel_path,
+        "diagnostics": diagnostics_payload,
+    }
+    legacy = (
+        legacy_diagnostics
+        if diagnostics_payload
         else "No diagnostics found for the code snippet (compiled successfully)."
+    )
+    return ok_response(payload, legacy_text=legacy)
+
+
+@mcp.tool("lean_tool_spec")
+def tool_spec(ctx: Context) -> Any:
+    spec = build_tool_spec()
+    return ok_response(
+        spec,
+        meta={"tool_spec_version": TOOL_SPEC_VERSION},
+        legacy_text=spec,
     )
 
 
 @mcp.tool("lean_leansearch")
 @rate_limited("leansearch", max_requests=3, per_seconds=30)
-def leansearch(ctx: Context, query: str, num_results: int = 5) -> List[Dict] | str:
+def leansearch(ctx: Context, query: str, num_results: int = 5) -> Any:
     """Search for Lean theorems, definitions, and tactics using leansearch.net.
 
     Query patterns:
@@ -578,7 +931,13 @@ def leansearch(ctx: Context, query: str, num_results: int = 5) -> List[Dict] | s
             results = json.loads(response.read().decode("utf-8"))
 
         if not results or not results[0]:
-            return "No results found."
+            message = "No results found."
+            return error_response(
+                message,
+                data={"query": query, "num_results": num_results},
+                meta={"source": "leansearch"},
+                legacy_text=message,
+            )
         results = results[0][:num_results]
         results = [r["result"] for r in results]
 
@@ -587,14 +946,25 @@ def leansearch(ctx: Context, query: str, num_results: int = 5) -> List[Dict] | s
             result["module_name"] = ".".join(result["module_name"])
             result["name"] = ".".join(result["name"])
 
-        return results
+        payload = {
+            "query": query,
+            "results": results,
+            "count": len(results),
+        }
+        return ok_response(payload, meta={"source": "leansearch"}, legacy_text=results)
     except Exception as e:
-        return f"leansearch error:\n{str(e)}"
+        message = f"leansearch error:\n{str(e)}"
+        return error_response(
+            "leansearch error",
+            data={"error": str(e), "query": query},
+            meta={"source": "leansearch"},
+            legacy_text=message,
+        )
 
 
 @mcp.tool("lean_loogle")
 @rate_limited("loogle", max_requests=3, per_seconds=30)
-def loogle(ctx: Context, query: str, num_results: int = 8) -> List[dict] | str:
+def loogle(ctx: Context, query: str, num_results: int = 8) -> Any:
     """Search for definitions and theorems using loogle.
 
     Query patterns:
@@ -624,21 +994,38 @@ def loogle(ctx: Context, query: str, num_results: int = 8) -> List[dict] | str:
             results = json.loads(response.read().decode("utf-8"))
 
         if "hits" not in results:
-            return "No results found."
+            message = "No results found."
+            return error_response(
+                message,
+                data={"query": query, "num_results": num_results},
+                meta={"source": "loogle"},
+                legacy_text=message,
+            )
 
         results = results["hits"][:num_results]
         for result in results:
             result.pop("doc")
-        return results
+        payload = {
+            "query": query,
+            "results": results,
+            "count": len(results),
+        }
+        return ok_response(payload, meta={"source": "loogle"}, legacy_text=results)
     except Exception as e:
-        return f"loogle error:\n{str(e)}"
+        message = f"loogle error:\n{str(e)}"
+        return error_response(
+            "loogle error",
+            data={"error": str(e), "query": query},
+            meta={"source": "loogle"},
+            legacy_text=message,
+        )
 
 
 @mcp.tool("lean_state_search")
 @rate_limited("lean_state_search", max_requests=3, per_seconds=30)
 def state_search(
     ctx: Context, file_path: str, line: int, column: int, num_results: int = 5
-) -> List | str:
+) -> Any:
     """Search for theorems based on proof state using premise-search.com.
 
     Only uses first goal if multiple.
@@ -654,7 +1041,12 @@ def state_search(
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(
+            message,
+            data={"file_path": file_path, "line": line, "column": column},
+            meta={"source": "lean_state_search"},
+        )
 
     file_contents = update_file(ctx, rel_path)
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
@@ -662,7 +1054,13 @@ def state_search(
 
     f_line = format_line(file_contents, line, column)
     if not goal or not goal.get("goals"):
-        return f"No goals found:\n{f_line}\nTry elsewhere?"
+        message = f"No goals found:\n{f_line}\nTry elsewhere?"
+        return error_response(
+            "No goals found",
+            data={"file": rel_path, "line": line, "column": column},
+            meta={"source": "lean_state_search"},
+            legacy_text=message,
+        )
 
     goal = urllib.parse.quote(goal["goals"][0])
 
@@ -679,18 +1077,34 @@ def state_search(
 
         for result in results:
             result.pop("rev")
-        # Very dirty type mix
-        results.insert(0, f"Results for line:\n{f_line}")
-        return results
+        payload = {
+            "file": rel_path,
+            "position": {"line": line, "column": column},
+            "query": goal,
+            "results": results,
+            "count": len(results),
+        }
+        legacy = [f"Results for line:\n{f_line}"] + results
+        return ok_response(
+            payload,
+            meta={"source": "lean_state_search", "endpoint": url},
+            legacy_text=legacy,
+        )
     except Exception as e:
-        return f"lean state search error:\n{str(e)}"
+        message = f"lean state search error:\n{str(e)}"
+        return error_response(
+            "lean state search error",
+            data={"error": str(e), "file": rel_path, "line": line, "column": column},
+            meta={"source": "lean_state_search"},
+            legacy_text=message,
+        )
 
 
 @mcp.tool("lean_hammer_premise")
 @rate_limited("hammer_premise", max_requests=3, per_seconds=30)
 def hammer_premise(
     ctx: Context, file_path: str, line: int, column: int, num_results: int = 32
-) -> List[str] | str:
+) -> Any:
     """Search for premises based on proof state using the lean hammer premise search.
 
     Args:
@@ -704,7 +1118,12 @@ def hammer_premise(
     """
     rel_path = setup_client_for_file(ctx, file_path)
     if not rel_path:
-        return "Invalid Lean file path: Unable to start LSP server or load file"
+        message = "Invalid Lean file path: Unable to start LSP server or load file"
+        return error_response(
+            message,
+            data={"file_path": file_path, "line": line, "column": column},
+            meta={"source": "lean_hammer_premise"},
+        )
 
     file_contents = update_file(ctx, rel_path)
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
@@ -712,7 +1131,13 @@ def hammer_premise(
 
     f_line = format_line(file_contents, line, column)
     if not goal or not goal.get("goals"):
-        return f"No goals found:\n{f_line}\nTry elsewhere?"
+        message = f"No goals found:\n{f_line}\nTry elsewhere?"
+        return error_response(
+            "No goals found",
+            data={"file": rel_path, "line": line, "column": column},
+            meta={"source": "lean_hammer_premise"},
+            legacy_text=message,
+        )
 
     data = {
         "state": goal["goals"][0],
@@ -736,10 +1161,27 @@ def hammer_premise(
             results = json.loads(response.read().decode("utf-8"))
 
         results = [result["name"] for result in results]
-        results.insert(0, f"Results for line:\n{f_line}")
-        return results
+        payload = {
+            "file": rel_path,
+            "position": {"line": line, "column": column},
+            "query": data["state"],
+            "results": results,
+            "count": len(results),
+        }
+        legacy = [f"Results for line:\n{f_line}"] + results
+        return ok_response(
+            payload,
+            meta={"source": "lean_hammer_premise", "endpoint": url},
+            legacy_text=legacy,
+        )
     except Exception as e:
-        return f"lean hammer premise error:\n{str(e)}"
+        message = f"lean hammer premise error:\n{str(e)}"
+        return error_response(
+            "lean hammer premise error",
+            data={"error": str(e), "file": rel_path, "line": line, "column": column},
+            meta={"source": "lean_hammer_premise"},
+            legacy_text=message,
+        )
 
 
 if __name__ == "__main__":
