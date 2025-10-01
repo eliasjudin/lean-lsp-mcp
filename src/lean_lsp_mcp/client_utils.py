@@ -85,48 +85,57 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
     """
     lifespan = ctx.request_context.lifespan_context
     project_cache = getattr(lifespan, "project_cache", {})
+    abs_file_path = os.path.abspath(file_path)
+    file_dir = os.path.dirname(abs_file_path)
+
+    def activate_project(project_path: str, cache_dirs: list[str]) -> str | None:
+        rel = get_relative_file_path(project_path, file_path)
+        if rel is None:
+            return None
+
+        project_path = os.path.abspath(project_path)
+        lifespan.lean_project_path = project_path
+
+        cache_targets: list[str] = []
+        for directory in cache_dirs + [project_path]:
+            if directory and directory not in cache_targets:
+                cache_targets.append(directory)
+
+        for directory in cache_targets:
+            project_cache[directory] = project_path
+        startup_client(ctx)
+        return rel
 
     # Check if the file_path works for the current lean_project_path.
     lean_project_path = lifespan.lean_project_path
     if lean_project_path is not None:
-        rel_path = get_relative_file_path(lean_project_path, file_path)
+        rel_path = activate_project(
+            lean_project_path,
+            [file_dir],
+        )
         if rel_path is not None:
-            project_cache[os.path.dirname(os.path.abspath(file_path))] = (
-                lean_project_path
-            )
-            startup_client(ctx)
             return rel_path
 
     # Try to find the new correct project path by checking all directories in file_path.
-    file_dir = os.path.dirname(file_path)
-    rel_path = None
     prev_dir = None
     visited_dirs: list[str] = []
-    while file_dir and file_dir != prev_dir:
-        visited_dirs.append(file_dir)
-        cached_root = project_cache.get(file_dir)
-        if cached_root:
-            lean_project_path = cached_root
-            rel_path = get_relative_file_path(lean_project_path, file_path)
-            if rel_path is not None:
-                lifespan.lean_project_path = lean_project_path
-                for visited in visited_dirs:
-                    project_cache[visited] = lean_project_path
-                startup_client(ctx)
-                break
-        elif valid_lean_project_path(file_dir):
-            lean_project_path = file_dir
-            rel_path = get_relative_file_path(lean_project_path, file_path)
-            if rel_path is not None:
-                lifespan.lean_project_path = lean_project_path
-                for visited in visited_dirs:
-                    project_cache[visited] = lean_project_path
-                startup_client(ctx)
-                break
-        else:
-            project_cache[file_dir] = ""
-        # Move up one directory
-        prev_dir = file_dir
-        file_dir = os.path.dirname(file_dir)
+    current_dir = file_dir
 
-    return rel_path
+    while current_dir and current_dir != prev_dir:
+        visited_dirs.append(current_dir)
+        cached_root = project_cache.get(current_dir)
+        if cached_root:
+            rel_path = activate_project(cached_root, visited_dirs)
+            if rel_path is not None:
+                return rel_path
+        elif valid_lean_project_path(current_dir):
+            rel_path = activate_project(current_dir, visited_dirs)
+            if rel_path is not None:
+                return rel_path
+        else:
+            project_cache[current_dir] = ""
+
+        prev_dir = current_dir
+        current_dir = os.path.dirname(current_dir)
+
+    return None

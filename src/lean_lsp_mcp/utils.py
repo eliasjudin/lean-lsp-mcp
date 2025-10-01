@@ -2,7 +2,7 @@ import os
 import sys
 import tempfile
 import textwrap
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import unquote, urlparse
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
@@ -114,15 +114,58 @@ def compute_pagination(
     return start_line, end_line, meta
 
 
+def _filter_diagnostics(
+    diagnostics: Iterable[Dict[str, Any]],
+    line: Optional[int],
+    column: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Return diagnostics that intersect the requested (0-indexed) position."""
+
+    if line is None:
+        return list(diagnostics)
+
+    matches: List[Dict[str, Any]] = []
+    for diagnostic in diagnostics:
+        diagnostic_range = diagnostic.get("range")
+        if not diagnostic_range:
+            continue
+
+        start = diagnostic_range.get("start", {})
+        end = diagnostic_range.get("end", {})
+        start_line = start.get("line")
+        end_line = end.get("line")
+
+        if start_line is None or end_line is None:
+            continue
+        if not (start_line <= line <= end_line):
+            continue
+
+        if column is None:
+            matches.append(diagnostic)
+            continue
+
+        start_char = start.get("character", 0)
+        end_char = end.get("character", column + 1)
+
+        if line == start_line and column < start_char:
+            continue
+        if line == end_line and column >= end_char:
+            continue
+
+        matches.append(diagnostic)
+
+    return matches
+
+
 def diagnostics_to_entries(
-    diagnostics: List[Dict], select_line: int = -1
+    diagnostics: List[Dict], select_line: int = -1, column: Optional[int] = None
 ) -> List[DiagnosticEntry]:
     """Convert Lean diagnostics to structured entries."""
 
-    entries: List[Dict[str, Any]] = []
     if select_line != -1:
-        diagnostics = filter_diagnostics_by_position(diagnostics, select_line, None)
+        diagnostics = _filter_diagnostics(diagnostics, select_line, column)
 
+    entries: List[Dict[str, Any]] = []
     for diag in diagnostics:
         primary_range = diag.get("fullRange", diag.get("range"))
         entry: DiagnosticEntry = {
@@ -211,11 +254,13 @@ def _format_related_information(related: List[Dict[str, Any]]) -> List[str]:
     return formatted
 
 
-def format_diagnostics(diagnostics: List[Dict], select_line: int = -1) -> List[str]:
+def format_diagnostics(
+    diagnostics: List[Dict], select_line: int = -1, column: Optional[int] = None
+) -> List[str]:
     """Format diagnostics for legacy text responses."""
 
     if select_line != -1:
-        diagnostics = filter_diagnostics_by_position(diagnostics, select_line, None)
+        diagnostics = _filter_diagnostics(diagnostics, select_line, column)
 
     formatted_messages: List[str] = []
     for diag in diagnostics:
@@ -252,8 +297,7 @@ def format_diagnostics(diagnostics: List[Dict], select_line: int = -1) -> List[s
 def format_goal(goal, default_msg):
     if goal is None:
         return default_msg
-    rendered = goal.get("rendered")
-    return rendered.replace("```lean\n", "").replace("\n```", "") if rendered else None
+    return clean_rendered(goal)
 
 
 def clean_rendered(goal: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -366,19 +410,7 @@ def filter_diagnostics_by_position(
     Returns:
         List[Dict]: List of diagnostics at the specified position.
     """
-    if column is None:
-        return [
-            d
-            for d in diagnostics
-            if d["range"]["start"]["line"] <= line <= d["range"]["end"]["line"]
-        ]
-
-    return [
-        d
-        for d in diagnostics
-        if d["range"]["start"]["line"] <= line <= d["range"]["end"]["line"]
-        and d["range"]["start"]["character"] <= column < d["range"]["end"]["character"]
-    ]
+    return _filter_diagnostics(diagnostics, line, column)
 
 
 class OptionalTokenVerifier(TokenVerifier):
