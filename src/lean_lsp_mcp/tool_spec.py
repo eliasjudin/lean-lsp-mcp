@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .schema import SCHEMA_VERSION
-
 TOOL_SPEC_VERSION = "2024-06-21"
 
 BASIC_TOOLS: List[Dict[str, Any]] = [
@@ -168,7 +166,6 @@ RESPONSE_KIND_SUMMARY: Dict[str, Dict[str, Any]] = {
 def build_tool_spec() -> Dict[str, Any]:
     return {
         "version": TOOL_SPEC_VERSION,
-        "schema_version": SCHEMA_VERSION,
         "tools": BASIC_TOOLS,
         "responses": RESPONSE_KIND_SUMMARY,
     }

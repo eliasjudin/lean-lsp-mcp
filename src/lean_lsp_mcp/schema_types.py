@@ -52,13 +52,7 @@ class RateLimitMeta(TypedDict):
 
 
 class ResponseMeta(TypedDict, total=False):
-    schema_version: str
     error: ErrorMeta
-    request_id: str
-    operation: str
-    source: str
-    endpoint: str
-    tool_spec_version: str
     rate_limit: RateLimitMeta
     pagination: "PaginationMeta"
 

@@ -12,7 +12,8 @@ def test_make_response_structured(monkeypatch):
     response = schema.make_response("ok", data=payload)
     assert response["status"] == "ok"
     assert response["data"] == payload
-    assert response["meta"]["schema_version"] == schema.SCHEMA_VERSION
+    # meta should be omitted when empty
+    assert "meta" not in response
 
 
 def test_make_response_legacy(monkeypatch):

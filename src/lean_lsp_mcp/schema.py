@@ -1,4 +1,9 @@
-"""Shared response schema helpers for Lean LSP MCP."""
+"""Shared response schema helpers for Lean LSP MCP.
+
+Simplified to minimize response size:
+- No global schema version in responses.
+- Omit the ``meta`` field entirely when empty.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,6 @@ from typing import Any, Callable, Dict, MutableMapping
 
 from lean_lsp_mcp.schema_types import ResponseMeta
 
-SCHEMA_VERSION = "1.0.0"
 RESPONSE_FORMAT_ENV = "LEAN_LSP_MCP_RESPONSE_FORMAT"
 
 LegacyFormatter = Callable[[Dict[str, Any]], Any] | str | None
@@ -34,15 +38,14 @@ def make_response(
             legacy mode is requested the raw data is returned.
     """
 
-    response_meta: Dict[str, Any] = {"schema_version": SCHEMA_VERSION}
+    # Build minimal envelope and only include meta if provided.
+    envelope: Dict[str, Any] = {"status": status, "data": data}
     if meta:
-        response_meta.update(meta)
-
-    envelope: Dict[str, Any] = {
-        "status": status,
-        "data": data,
-        "meta": response_meta,
-    }
+        # Avoid inserting empty meta objects to reduce tokens.
+        # Copy to a regular dict to ensure JSON-serializable structure.
+        response_meta: Dict[str, Any] = dict(meta)
+        if response_meta:
+            envelope["meta"] = response_meta
 
     if _is_legacy_mode():
         if legacy_formatter is None:
@@ -54,4 +57,4 @@ def make_response(
     return envelope
 
 
-__all__ = ["SCHEMA_VERSION", "RESPONSE_FORMAT_ENV", "make_response"]
+__all__ = ["RESPONSE_FORMAT_ENV", "make_response"]

@@ -21,7 +21,7 @@ from leanclient import LeanLSPClient, DocumentContentChange
 from lean_lsp_mcp.client_utils import setup_client_for_file, startup_client
 from lean_lsp_mcp.file_utils import get_file_contents, update_file
 from lean_lsp_mcp.instructions import INSTRUCTIONS
-from lean_lsp_mcp.tool_spec import TOOL_SPEC_VERSION, build_tool_spec
+from lean_lsp_mcp.tool_spec import build_tool_spec
 from lean_lsp_mcp.schema import make_response
 from lean_lsp_mcp.schema_types import (
     ERROR_BAD_REQUEST,
@@ -275,7 +275,6 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) 
                 "output": build_output,
                 "clean": clean,
             },
-            meta={"operation": "build"},
             legacy_text=build_output,
         )
     except Exception as e:
@@ -288,7 +287,6 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) 
                 "project_path": lean_project_path,
                 "clean": clean,
             },
-            meta={"operation": "build"},
             legacy_text=error_text,
         )
 
@@ -366,11 +364,7 @@ def file_contents(
             {"number": start + idx, "text": line}
             for idx, line in enumerate(slice_lines)
         ]
-        payload = {
-            "path": file_path,
-            "annotated": True,
-            "lines": payload_lines,
-        }
+        payload = {"path": file_path, "lines": payload_lines}
         max_digits = len(str(total_lines if total_lines else 1))
         annotated = "".join(
             f"{entry['number']}{' ' * (max_digits - len(str(entry['number'])))}: {entry['text']}\n"
@@ -379,12 +373,7 @@ def file_contents(
         return ok_response(payload, meta=meta, legacy_text=annotated)
 
     slice_text = "\n".join(slice_lines)
-    payload = {
-        "path": file_path,
-        "annotated": False,
-        "contents": slice_text,
-        "start_line": start,
-    }
+    payload = {"path": file_path, "contents": slice_text}
     return ok_response(payload, meta=meta, legacy_text=slice_text)
 
 
@@ -550,7 +539,6 @@ def goal(ctx: Context, file_path: str, line: int, column: Optional[int] = None) 
 
             payload = {
                 "file": rel_path,
-                "request": {"line": line, "column": None},
                 "line": lines[line - 1],
                 "results": [
                     {"position": "line_start", "goal": goal_to_payload(goal_start)},
@@ -580,10 +568,8 @@ def goal(ctx: Context, file_path: str, line: int, column: Optional[int] = None) 
 
         payload = {
             "file": rel_path,
-            "request": {"line": line, "column": column},
             "position": {"line": line, "column": column},
             "goal": goal_to_payload(goal),
-            "line": format_line(content, line, None),
             "line_with_cursor": f_line,
         }
         legacy = f"Goals at:\n{f_line}\n{f_goal}"
@@ -650,10 +636,8 @@ def term_goal(
         payload = {
             "file": rel_path,
             "position": {"line": line, "column": column},
-            "line": format_line(content, line, None),
             "line_with_cursor": f_line,
             "rendered": rendered,
-            "raw": term_goal,
         }
         legacy = f"Term goal at:\n{f_line}\n{rendered or 'No term goal found.'}"
         return ok_response(payload, legacy_text=legacy)
@@ -825,7 +809,6 @@ def completions(
             "position": {"line": line, "column": column},
             "prefix": prefix,
             "suggestions": suggestions,
-            "line": format_line(content, line, None),
             "line_with_cursor": f_line,
         }
 
@@ -909,7 +892,6 @@ def declaration_file(ctx: Context, file_path: str, symbol: str) -> Any:
             "symbol": symbol,
             "origin_file": rel_path,
             "declaration": {
-                "uri": uri,
                 "path": abs_path,
                 "contents": file_content,
             },
@@ -1125,11 +1107,7 @@ def run_code(ctx: Context, code: str) -> Any:
 @mcp.tool("lean_tool_spec")
 def tool_spec(ctx: Context) -> Any:
     spec = build_tool_spec()
-    return ok_response(
-        spec,
-        meta={"tool_spec_version": TOOL_SPEC_VERSION},
-        legacy_text=spec,
-    )
+    return ok_response(spec, legacy_text=spec)
 
 
 @mcp.tool("lean_leansearch")
@@ -1172,7 +1150,6 @@ def leansearch(ctx: Context, query: str, num_results: int = 5) -> Any:
             return error_response(
                 message,
                 data={"query": query, "num_results": num_results},
-                meta={"source": "leansearch"},
                 legacy_text=message,
             )
         results = results[0][:num_results]
@@ -1183,18 +1160,13 @@ def leansearch(ctx: Context, query: str, num_results: int = 5) -> Any:
             result["module_name"] = ".".join(result["module_name"])
             result["name"] = ".".join(result["name"])
 
-        payload = {
-            "query": query,
-            "results": results,
-            "count": len(results),
-        }
-        return ok_response(payload, meta={"source": "leansearch"}, legacy_text=results)
+        payload = {"query": query, "results": results}
+        return ok_response(payload, legacy_text=results)
     except Exception as e:
         message = f"leansearch error:\n{str(e)}"
         return error_response(
             "leansearch error",
             data={"error": str(e), "query": query},
-            meta={"source": "leansearch"},
             legacy_text=message,
         )
 
@@ -1235,25 +1207,19 @@ def loogle(ctx: Context, query: str, num_results: int = 8) -> Any:
             return error_response(
                 message,
                 data={"query": query, "num_results": num_results},
-                meta={"source": "loogle"},
                 legacy_text=message,
             )
 
         results = results["hits"][:num_results]
         for result in results:
             result.pop("doc", None)
-        payload = {
-            "query": query,
-            "results": results,
-            "count": len(results),
-        }
-        return ok_response(payload, meta={"source": "loogle"}, legacy_text=results)
+        payload = {"query": query, "results": results}
+        return ok_response(payload, legacy_text=results)
     except Exception as e:
         message = f"loogle error:\n{str(e)}"
         return error_response(
             "loogle error",
             data={"error": str(e), "query": query},
-            meta={"source": "loogle"},
             legacy_text=message,
         )
 
@@ -1282,7 +1248,6 @@ def state_search(
         return error_response(
             message,
             data={"file_path": file_path, "line": line, "column": column},
-            meta={"source": "lean_state_search"},
         )
 
     with client_session(ctx) as client:
@@ -1290,7 +1255,6 @@ def state_search(
             return error_response(
                 "Lean client is not available. Run another tool to initialize the project first.",
                 data={"file": rel_path, "line": line, "column": column},
-                meta={"source": "lean_state_search"},
                 code=ERROR_CLIENT_NOT_READY,
             )
 
@@ -1303,7 +1267,6 @@ def state_search(
         return error_response(
             "No goals found",
             data={"file": rel_path, "line": line, "column": column},
-            meta={"source": "lean_state_search"},
             legacy_text=message,
         )
 
@@ -1328,20 +1291,14 @@ def state_search(
             "position": {"line": line, "column": column},
             "query": goal_text,
             "results": results,
-            "count": len(results),
         }
         legacy = [f"Results for line:\n{f_line}"] + results
-        return ok_response(
-            payload,
-            meta={"source": "lean_state_search", "endpoint": url},
-            legacy_text=legacy,
-        )
+        return ok_response(payload, legacy_text=legacy)
     except Exception as e:
         message = f"lean state search error:\n{str(e)}"
         return error_response(
             "lean state search error",
             data={"error": str(e), "file": rel_path, "line": line, "column": column},
-            meta={"source": "lean_state_search"},
             legacy_text=message,
         )
 
@@ -1368,7 +1325,6 @@ def hammer_premise(
         return error_response(
             message,
             data={"file_path": file_path, "line": line, "column": column},
-            meta={"source": "lean_hammer_premise"},
         )
 
     with client_session(ctx) as client:
@@ -1376,7 +1332,6 @@ def hammer_premise(
             return error_response(
                 "Lean client is not available. Run another tool to initialize the project first.",
                 data={"file": rel_path, "line": line, "column": column},
-                meta={"source": "lean_hammer_premise"},
                 code=ERROR_CLIENT_NOT_READY,
             )
 
@@ -1389,7 +1344,6 @@ def hammer_premise(
         return error_response(
             "No goals found",
             data={"file": rel_path, "line": line, "column": column},
-            meta={"source": "lean_hammer_premise"},
             legacy_text=message,
         )
 
@@ -1420,20 +1374,14 @@ def hammer_premise(
             "position": {"line": line, "column": column},
             "query": data["state"],
             "results": results,
-            "count": len(results),
         }
         legacy = [f"Results for line:\n{f_line}"] + results
-        return ok_response(
-            payload,
-            meta={"source": "lean_hammer_premise", "endpoint": url},
-            legacy_text=legacy,
-        )
+        return ok_response(payload, legacy_text=legacy)
     except Exception as e:
         message = f"lean hammer premise error:\n{str(e)}"
         return error_response(
             "lean hammer premise error",
             data={"error": str(e), "file": rel_path, "line": line, "column": column},
-            meta={"source": "lean_hammer_premise"},
             legacy_text=message,
         )
 
