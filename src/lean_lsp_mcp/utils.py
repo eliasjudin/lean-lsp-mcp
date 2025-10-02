@@ -2,17 +2,20 @@ import os
 import sys
 import tempfile
 import textwrap
-from typing import Any, Dict, Iterable, List, Optional
+from collections import Counter
+from pathlib import Path, PurePath, PurePosixPath
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import unquote, urlparse
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from lean_lsp_mcp.schema_types import (
     DiagnosticEntry,
+    DiagnosticsSummary,
+    FileIdentity,
     GoalPayload,
+    LSPRange,
     PaginationMeta,
-    Position,
-    Range,
 )
 
 
@@ -84,25 +87,27 @@ class OutputCapture:
         return self.captured_output
 
 
-def _normalize_position(line: int, character: int) -> Position:
-    """Return 1-indexed line/column payloads."""
-
-    return {"line": line + 1, "column": character + 1}
-
-
-def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional[Range]:
-    """Convert an LSP range (0-indexed) into 1-indexed coordinates."""
+def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional[LSPRange]:
+    """Return a shallow copy of a 0-based LSP range."""
 
     if not range_dict:
         return None
-    return {
-        "start": _normalize_position(
-            range_dict["start"]["line"], range_dict["start"]["character"]
-        ),
-        "end": _normalize_position(
-            range_dict["end"]["line"], range_dict["end"]["character"]
-        ),
-    }
+
+    try:
+        start = range_dict["start"]
+        end = range_dict["end"]
+        return {
+            "start": {
+                "line": int(start["line"]),
+                "character": int(start["character"]),
+            },
+            "end": {
+                "line": int(end["line"]),
+                "character": int(end["character"]),
+            },
+        }
+    except (KeyError, TypeError, ValueError):  # pragma: no cover - defensive guard
+        return None
 
 
 def compute_pagination(
@@ -119,14 +124,14 @@ def compute_pagination(
 
     end_line = min(total_lines, start_line + line_count - 1)
     has_more = end_line < total_lines
-    next_start = end_line + 1 if has_more else None
     meta: PaginationMeta = {
         "start_line": start_line,
         "end_line": end_line if total_lines else 0,
         "total_lines": total_lines,
         "has_more": has_more,
-        "next_start_line": next_start,
     }
+    if has_more:
+        meta["next_start_line"] = end_line + 1
     return start_line, end_line, meta
 
 
@@ -181,28 +186,98 @@ def diagnostics_to_entries(
     if select_line != -1:
         diagnostics = _filter_diagnostics(diagnostics, select_line, column)
 
-    entries: List[Dict[str, Any]] = []
+    entries: List[DiagnosticEntry] = []
     for diag in diagnostics:
         primary_range = diag.get("fullRange", diag.get("range"))
+        severity_label, severity_code = _map_severity(diag.get("severity"))
         entry: DiagnosticEntry = {
             "message": diag.get("message", ""),
-            "severity": diag.get("severity"),
+            "severity": severity_label,
+            "severityCode": severity_code,
             "range": normalize_range(primary_range),
         }
         if "source" in diag:
             entry["source"] = diag["source"]
         if "code" in diag:
             entry["code"] = diag["code"]
+        if "tags" in diag and isinstance(diag["tags"], list):
+            entry["tags"] = list(diag["tags"])
+        related = diag.get("relatedInformation")
+        if isinstance(related, list):
+            entry["relatedInformation"] = related
         entries.append(entry)
     return entries
 
 
+def summarize_diagnostics(entries: Iterable[DiagnosticEntry]) -> DiagnosticsSummary:
+    counts = Counter()
+    for entry in entries:
+        label = entry.get("severity") or "unknown"
+        counts[label] += 1
+    summary_counts: Dict[str, int] = dict(counts)
+    total = sum(summary_counts.values())
+    return {
+        "count": total,
+        "bySeverity": summary_counts,
+        "has_errors": summary_counts.get("error", 0) > 0,
+    }
+
+
 _SEVERITY_LABELS = {
-    1: "Error",
-    2: "Warning",
-    3: "Info",
-    4: "Hint",
+    1: "error",
+    2: "warning",
+    3: "info",
+    4: "hint",
 }
+
+
+def _sanitize_relative_path(path: str) -> str:
+    if not path:
+        return path
+    # Normalize Windows-style separators first so backslashes are treated as
+    # path separators even on POSIX. Then construct a POSIX path.
+    # Example: "Foo\\Bar/Proof.lean" -> "Foo/Bar/Proof.lean"
+    normalized = path.replace("\\", "/")
+    return PurePosixPath(normalized).as_posix()
+
+
+def _absolute_path_to_uri(path: str) -> str:
+    expanded = os.path.expanduser(path)
+    path_obj = Path(expanded)
+    if not path_obj.is_absolute():
+        path_obj = (Path.cwd() / path_obj).resolve()
+    else:
+        path_obj = path_obj.resolve()
+    return path_obj.as_uri()
+
+
+def file_identity(relative_path: str, absolute_path: Optional[str] = None) -> FileIdentity:
+    sanitized = _sanitize_relative_path(relative_path)
+    uri = ""
+    try:
+        if absolute_path:
+            uri = _absolute_path_to_uri(absolute_path)
+        else:
+            expanded = os.path.expanduser(sanitized)
+            if expanded and os.path.isabs(expanded):
+                uri = _absolute_path_to_uri(expanded)
+    except ValueError:
+        uri = ""
+    return {
+        "uri": uri,
+        "relative_path": sanitized,
+    }
+
+
+def _map_severity(value: Any) -> tuple[str | None, int | None]:
+    try:
+        severity_int = int(value)
+    except (TypeError, ValueError):
+        return None, None
+    label = _SEVERITY_LABELS.get(severity_int)
+    if label is None:
+        return "unknown", severity_int
+    return label, severity_int
 
 
 def _diagnostic_path(diag: Dict[str, Any]) -> Optional[str]:
@@ -281,7 +356,10 @@ def format_diagnostics(
     formatted_messages: List[str] = []
     for diag in diagnostics:
         severity_value = diag.get("severity")
-        severity_label = _SEVERITY_LABELS.get(severity_value, str(severity_value))
+        severity_label = _SEVERITY_LABELS.get(severity_value)
+        severity_display = (
+            severity_label.capitalize() if severity_label else str(severity_value)
+        )
         range_dict = diag.get("fullRange", diag.get("range"))
         location_label = _format_range_label(range_dict, diag)
 
@@ -290,7 +368,7 @@ def format_diagnostics(
         provenance_parts = [str(part) for part in (source, code) if part]
         provenance_suffix = f" ({'#'.join(provenance_parts)})" if provenance_parts else ""
 
-        header = f"[{severity_label}] {location_label}{provenance_suffix}"
+        header = f"[{severity_display}] {location_label}{provenance_suffix}"
 
         message = diag.get("message", "")
         message_block = message.rstrip("\n")
@@ -339,31 +417,86 @@ def goal_to_payload(goal: Optional[Dict[str, Any]]) -> Optional[GoalPayload]:
     return payload
 
 
-def extract_range(content: str, range: dict) -> str:
+def extract_range(content: str, range_info: Mapping[str, Mapping[str, int]]) -> str:
     """Extract the text from the content based on the range.
 
     Args:
         content (str): The content to extract from.
-        range (dict): The range to extract.
+        range_info (Mapping[str, Mapping[str, int]]): The range to extract.
 
     Returns:
         str: The extracted range text.
     """
-    start_line = range["start"]["line"]
-    start_char = range["start"]["character"]
-    end_line = range["end"]["line"]
-    end_char = range["end"]["character"]
-
-    lines = content.splitlines()
-    if start_line < 0 or end_line >= len(lines):
+    try:
+        start = range_info["start"]
+        end = range_info["end"]
+        start_line = int(start["line"])
+        start_char = int(start["character"])
+        end_line = int(end["line"])
+        end_char = int(end["character"])
+    except (KeyError, TypeError, ValueError):
         return "Range out of bounds"
-    if start_line == end_line:
-        return lines[start_line][start_char:end_char]
+
+    if min(start_line, start_char, end_line, end_char) < 0:
+        return "Range out of bounds"
+
+    segments = content.splitlines(keepends=True)
+    line_starts: List[int] = []
+    line_bodies: List[str] = []
+    offset = 0
+
+    if segments:
+        for segment in segments:
+            line_starts.append(offset)
+            line_body = segment.rstrip("\r\n")
+            line_bodies.append(line_body)
+            offset += len(segment)
     else:
-        selected_lines = lines[start_line : end_line + 1]
-        selected_lines[0] = selected_lines[0][start_char:]
-        selected_lines[-1] = selected_lines[-1][:end_char]
-        return "\n".join(selected_lines)
+        line_starts.append(0)
+        line_bodies.append("")
+        offset = 0
+
+    sentinel_index = len(line_starts)
+    document_end = len(content)
+
+    def _utf16_to_codepoint_index(line_body: str, utf16_index: int) -> Optional[int]:
+        if utf16_index <= 0:
+            return 0
+
+        code_units_consumed = 0
+        for idx, ch in enumerate(line_body):
+            # Code points above the BMP occupy two UTF-16 code units.
+            units = 2 if ord(ch) >= 0x10000 else 1
+            next_units = code_units_consumed + units
+            if utf16_index < next_units:
+                return idx
+            code_units_consumed = next_units
+            if utf16_index == code_units_consumed:
+                return idx + 1
+
+        # If requested position is beyond line end, signal out-of-bounds.
+        return None
+
+    def resolve_position(line: int, character: int) -> Optional[int]:
+        if line < 0 or character < 0:
+            return None
+        if line == sentinel_index:
+            return document_end if character == 0 else None
+        if line >= sentinel_index:
+            return None
+        line_body = line_bodies[line]
+        codepoint_index = _utf16_to_codepoint_index(line_body, character)
+        if codepoint_index is None:
+            return None
+        return line_starts[line] + codepoint_index
+
+    start_offset = resolve_position(start_line, start_char)
+    end_offset = resolve_position(end_line, end_char)
+
+    if start_offset is None or end_offset is None or end_offset < start_offset:
+        return "Range out of bounds"
+
+    return content[start_offset:end_offset]
 
 
 def find_start_position(content: str, query: str) -> dict | None:

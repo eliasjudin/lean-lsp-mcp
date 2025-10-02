@@ -187,6 +187,41 @@ You can also often set these environment variables in your MCP client configurat
 }
 ```
 
+## Response Format
+
+Every tool returns a [Model Context Protocol](https://modelcontextprotocol.io/) ``CallToolResult`` envelope. The
+human-friendly summary lives in ``content`` while the complete machine-usable payload is exposed under
+``structuredContent``. Errors set ``isError: true`` and still include a descriptive text item.
+
+```jsonc
+{
+  "content": [
+    { "type": "text", "text": "2 diagnostics (2 errors) in Formalization/xyz.lean" }
+  ],
+  "structuredContent": {
+    "file": { "uri": "file:///Formalization/xyz.lean", "relative_path": "Formalization/xyz.lean" },
+    "diagnostics": [
+      {
+        "message": "typeclass instance problem is stuck",
+        "severity": "error",
+        "severityCode": 1,
+        "range": {
+          "start": { "line": 110, "character": 18 },
+          "end": { "line": 110, "character": 34 }
+        },
+        "source": "Lean 4"
+      }
+    ],
+    "summary": { "count": 2, "bySeverity": { "error": 2 }, "has_errors": true }
+  },
+  "isError": false,
+  "_meta": { "duration_ms": 87, "request_id": "..." }
+}
+```
+
+Structured payloads follow the Language Server Protocol convention of **0-based** line/column positions and include
+sanitized ``file:///`` URIs alongside workspace-relative paths.
+
 ## Tools
 
 Tools are currently the only way to interact with the MCP server.
@@ -202,18 +237,34 @@ Get the contents of a Lean file, optionally with line number annotations.
 Get all diagnostic messages for a Lean file. This includes infos, warnings and errors.
 
 <details>
-<summary>Example output</summary>
+<summary>Example response</summary>
 
-l20c42-l20c46, severity: 1<br>
-simp made no progress
+```jsonc
+{
+  "content": [
+    { "type": "text", "text": "2 diagnostics (2 errors) in Formalization/xyz.lean" }
+  ],
+  "structuredContent": {
+    "file": { "uri": "file:///Formalization/xyz.lean", "relative_path": "Formalization/xyz.lean" },
+    "diagnostics": [
+      {
+        "message": "simp made no progress",
+        "severity": "error",
+        "severityCode": 1,
+        "range": {
+          "start": { "line": 19, "character": 41 },
+          "end": { "line": 19, "character": 45 }
+        },
+        "source": "Lean 4"
+      }
+    ],
+    "summary": { "count": 2, "bySeverity": { "error": 2 }, "has_errors": true }
+  },
+  "isError": false,
+  "_meta": { "duration_ms": 52, "request_id": "..." }
+}
+```
 
-l21c11-l21c45, severity: 1<br>
-function expected at
-  h_empty
-term has type
-  T ∩ compl T = ∅
-
-...
 </details>
 
 #### lean_goal
@@ -270,9 +321,34 @@ Code auto-completion: Find available identifiers or import suggestions at a spec
 
 Run/compile an independent Lean code snippet/file and return the result or error message.
 <details>
-<summary>Example output (code snippet: `#eval 5 * 7 + 3`)</summary>
-l1c1-l1c6, severity: 3<br>
-38
+<summary>Example response (code snippet: `#eval 5 * 7 + 3`)</summary>
+
+```jsonc
+{
+  "content": [
+    { "type": "text", "text": "1 diagnostic(s) for snippet _mcp_snippet_deadbeef.lean." },
+    { "type": "resource", "resource": { "uri": "file:///_mcp_snippet_deadbeef.lean", "mimeType": "text/plain", "text": "[Info] 0:0-0:5\n38" } }
+  ],
+  "structuredContent": {
+    "file": { "uri": "file:///_mcp_snippet_deadbeef.lean", "relative_path": "_mcp_snippet_deadbeef.lean" },
+    "diagnostics": [
+      {
+        "message": "38",
+        "severity": "info",
+        "severityCode": 3,
+        "range": {
+          "start": { "line": 0, "character": 0 },
+          "end": { "line": 0, "character": 5 }
+        }
+      }
+    ],
+    "summary": { "count": 1, "bySeverity": { "info": 1 }, "has_errors": false }
+  },
+  "isError": false,
+  "_meta": { "duration_ms": 71, "request_id": "..." }
+}
+```
+
 </details>
 
 #### lean_multi_attempt
@@ -281,30 +357,45 @@ Attempt multiple lean code snippets on a line and return goal state and diagnost
 This tool is useful to screen different proof attempts before using the most promising one.
 
 <details>
-<summary>Example output (attempting `rw [Nat.pow_sub (Fintype.card_pos_of_nonempty S)]` and `by_contra h_neq`)</summary>
-  rw [Nat.pow_sub (Fintype.card_pos_of_nonempty S)]:<br>
-S : Type u_1<br>
-inst✝¹ : Fintype S<br>
-inst✝ : Nonempty S<br>
-P : Finset (Set S)<br>
-hPP : ∀ T ∈ P, ∀ U ∈ P, T ∩ U ≠ ∅<br>
-hPS : ¬∃ T ∉ P, ∀ U ∈ P, T ∩ U ≠ ∅<br>
-⊢ P.card = 2 ^ (Fintype.card S - 1)<br>
-<br>
-l14c7-l14c51, severity: 1<br>
-unknown constant 'Nat.pow_sub'<br>
-<br>
-  by_contra h_neq:<br>
- S : Type u_1<br>
-inst✝¹ : Fintype S<br>
-inst✝ : Nonempty S<br>
-P : Finset (Set S)<br>
-hPP : ∀ T ∈ P, ∀ U ∈ P, T ∩ U ≠ ∅<br>
-hPS : ¬∃ T ∉ P, ∀ U ∈ P, T ∩ U ≠ ∅<br>
-h_neq : ¬P.card = 2 ^ (Fintype.card S - 1)<br>
-⊢ False<br>
-<br>
-...
+<summary>Example response (attempting `rw [Nat.pow_sub ...]` and `by_contra h_neq`)</summary>
+
+```jsonc
+{
+  "content": [
+    { "type": "text", "text": "Tried 2 snippet(s) at line 14 in Formalization/xyz.lean." },
+    { "type": "text", "text": "`rw [Nat.pow_sub ...]`: 1 diagnostics; `by_contra h_neq`: 0 diagnostics" }
+  ],
+  "structuredContent": {
+    "file": { "uri": "file:///Formalization/xyz.lean", "relative_path": "Formalization/xyz.lean" },
+    "position": { "line": 13, "character": 0 },
+    "attempts": [
+      {
+        "snippet": "rw [Nat.pow_sub (Fintype.card_pos_of_nonempty S)]",
+        "goal": { "rendered": "⊢ P.card = 2 ^ (Fintype.card S - 1)" },
+        "diagnostics": [
+          {
+            "message": "unknown constant 'Nat.pow_sub'",
+            "severity": "error",
+            "severityCode": 1,
+            "range": {
+              "start": { "line": 13, "character": 6 },
+              "end": { "line": 13, "character": 50 }
+            }
+          }
+        ]
+      },
+      {
+        "snippet": "by_contra h_neq",
+        "goal": { "rendered": "⊢ False" },
+        "diagnostics": []
+      }
+    ]
+  },
+  "isError": false,
+  "_meta": { "duration_ms": 192, "request_id": "..." }
+}
+```
+
 </details>
 
 ### External Search Tools
@@ -321,20 +412,30 @@ Search for theorems in Mathlib using [leansearch.net](https://leansearch.net) (n
 - Example: `bijective map from injective`, `n + 1 <= m if n < m`, `Cauchy Schwarz`, `List.sum`, `{f : A → B} (hf : Injective f) : ∃ h, Bijective h`
 
 <details>
-<summary>Example output (query by LLM: `bijective map from injective`)</summary>
+<summary>Example response (query by LLM: `bijective map from injective`)</summary>
 
-```json
-  {
-    "module_name": "Mathlib.Logic.Function.Basic",
-    "kind": "theorem",
-    "name": "Function.Bijective.injective",
-    "signature": " {f : α → β} (hf : Bijective f) : Injective f",
-    "type": "∀ {α : Sort u_1} {β : Sort u_2} {f : α → β}, Function.Bijective f → Function.Injective f",
-    "value": ":= hf.1",
-    "informal_name": "Bijectivity Implies Injectivity",
-    "informal_description": "For any function $f \\colon \\alpha \\to \\beta$, if $f$ is bijective, then $f$ is injective."
+```jsonc
+{
+  "content": [
+    { "type": "text", "text": "Found 3 leansearch result(s) for `bijective map from injective`." },
+    { "type": "text", "text": "Function.Bijective.injective, Function.Surjective.comp, Equiv.comp" }
+  ],
+  "structuredContent": {
+    "query": "bijective map from injective",
+    "results": [
+      {
+        "module_name": "Mathlib.Logic.Function.Basic",
+        "kind": "theorem",
+        "name": "Function.Bijective.injective",
+        "signature": "{f : α → β} (hf : Bijective f) : Injective f",
+        "informal_name": "Bijectivity Implies Injectivity"
+      },
+      ...
+    ]
   },
-  ...
+  "isError": false,
+  "_meta": { "duration_ms": 134, "request_id": "..." }
+}
 ```
 </details>
 
@@ -348,17 +449,28 @@ Search for Lean definitions and theorems using [loogle.lean-lang.org](https://lo
 - Example: `Real.sin`, `"differ"`, `_ * (_ ^ _)`, `(?a -> ?b) -> List ?a -> List ?b`, `|- tsum _ = _ * tsum _`
 
 <details>
-<summary>Example output (`Real.sin`)</summary>
+<summary>Example response (`Real.sin`)</summary>
 
-```json
-[
-  {
-    "type": " (x : ℝ) : ℝ",
-    "name": "Real.sin",
-    "module": "Mathlib.Data.Complex.Trigonometric"
+```jsonc
+{
+  "content": [
+    { "type": "text", "text": "Found 2 loogle result(s) for `Real.sin`." },
+    { "type": "text", "text": "Real.sin, Real.cos" }
+  ],
+  "structuredContent": {
+    "query": "Real.sin",
+    "results": [
+      {
+        "type": "(x : ℝ) : ℝ",
+        "name": "Real.sin",
+        "module": "Mathlib.Data.Complex.Trigonometric"
+      },
+      ...
+    ]
   },
-  ...
-]
+  "isError": false,
+  "_meta": { "duration_ms": 98, "request_id": "..." }
+}
 ```
 </details>
 
@@ -372,17 +484,34 @@ A self-hosted version is [available](https://github.com/ruc-ai4math/LeanStateSea
 
 Uses the first goal at a given line and column.
 Returns a list of relevant theorems.
-<details> <summary>Example output (line 24, column 3)</summary>
+<details> <summary>Example response (line 24, column 3)</summary>
 
-```json
-[
-  {
-    "name": "Nat.mul_zero",
-    "formal_type": "∀ (n : Nat), n * 0 = 0",
-    "module": "Init.Data.Nat.Basic"
+```jsonc
+{
+  "content": [
+    { "type": "text", "text": "Found 5 state search result(s) for Formalization/xyz.lean:24:3." },
+    { "type": "text", "text": "Nat.mul_zero, Nat.mul_succ, Nat.zero_mul" }
+  ],
+  "structuredContent": {
+    "file": { "uri": "file:///Formalization/xyz.lean", "relative_path": "Formalization/xyz.lean" },
+    "position": { "line": 23, "character": 2 },
+    "query": {
+      "goal": "⊢ 0 = 0",
+      "preview": "    0 * n",
+      "result_limit": 5
+    },
+    "results": [
+      {
+        "name": "Nat.mul_zero",
+        "formal_type": "∀ (n : Nat), n * 0 = 0",
+        "module": "Init.Data.Nat.Basic"
+      },
+      ...
+    ]
   },
-  ...
-]
+  "isError": false,
+  "_meta": { "duration_ms": 241, "request_id": "..." }
+}
 ```
 </details>
 
@@ -399,15 +528,32 @@ Uses the first goal at a given line and column.
 Returns a list of relevant premises (theorems) that can be used to prove the goal.
 
 Note: We use a simplified version, [LeanHammer](https://github.com/JOSHCLUNE/LeanHammer) might have better premise search results.
-<details><summary>Example output (line 24, column 3)</summary>
+<details><summary>Example response (line 24, column 3)</summary>
 
-```json
-[
-  "MulOpposite.unop_injective",
-  "MulOpposite.op_injective",
-  "WellFoundedLT.induction",
-  ...
-]
+```jsonc
+{
+  "content": [
+    { "type": "text", "text": "Found 4 hammer premise result(s) for Formalization/xyz.lean:24:3." },
+    { "type": "text", "text": "MulOpposite.unop_injective, MulOpposite.op_injective, WellFoundedLT.induction" }
+  ],
+  "structuredContent": {
+    "file": { "uri": "file:///Formalization/xyz.lean", "relative_path": "Formalization/xyz.lean" },
+    "position": { "line": 23, "character": 2 },
+    "query": {
+      "state": "⊢ False",
+      "preview": "    have h : False := ...",
+      "result_limit": 4
+    },
+    "results": [
+      "MulOpposite.unop_injective",
+      "MulOpposite.op_injective",
+      "WellFoundedLT.induction",
+      ...
+    ]
+  },
+  "isError": false,
+  "_meta": { "duration_ms": 178, "request_id": "..." }
+}
 ```
 </details>
 

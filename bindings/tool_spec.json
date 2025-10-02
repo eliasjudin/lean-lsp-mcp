@@ -16,6 +16,13 @@
           "type": "boolean",
           "required": false,
           "default": false
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "LeanBuildResult"
@@ -44,6 +51,13 @@
           "name": "line_count",
           "type": "integer",
           "required": false
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "FileContents"
@@ -66,6 +80,13 @@
           "name": "line_count",
           "type": "integer",
           "required": false
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "Diagnostics"
@@ -88,6 +109,13 @@
           "name": "column",
           "type": "integer",
           "required": false
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "Goal"
@@ -110,6 +138,13 @@
           "name": "column",
           "type": "integer",
           "required": false
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "Goal"
@@ -132,6 +167,13 @@
           "name": "column",
           "type": "integer",
           "required": true
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "Hover"
@@ -160,6 +202,13 @@
           "type": "integer",
           "required": false,
           "default": 32
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "Completions"
@@ -177,6 +226,13 @@
           "name": "symbol",
           "type": "string",
           "required": true
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "Declaration"
@@ -202,6 +258,13 @@
             "type": "string"
           },
           "required": true
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "MultiAttempt"
@@ -214,6 +277,13 @@
           "name": "code",
           "type": "string",
           "required": true
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "RunCode"
@@ -232,6 +302,13 @@
           "type": "integer",
           "required": false,
           "default": 5
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "SearchResults",
@@ -255,6 +332,13 @@
           "type": "integer",
           "required": false,
           "default": 8
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "SearchResults",
@@ -288,6 +372,13 @@
           "type": "integer",
           "required": false,
           "default": 5
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "SearchResults",
@@ -321,6 +412,13 @@
           "type": "integer",
           "required": false,
           "default": 32
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "required": false,
+          "enum": ["compact", "verbose"],
+          "default": "compact"
         }
       ],
       "response": "SearchResults",

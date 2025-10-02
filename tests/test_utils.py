@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from conftest import load_from_src
@@ -7,15 +10,15 @@ from conftest import load_from_src
 utils = load_from_src("lean_lsp_mcp.utils")
 
 
-def test_normalize_range_converts_to_one_indexed():
+def test_normalize_range_preserves_zero_based_positions():
     original = {
         "start": {"line": 0, "character": 4},
         "end": {"line": 1, "character": 0},
     }
     normalized = utils.normalize_range(original)
     assert normalized == {
-        "start": {"line": 1, "column": 5},
-        "end": {"line": 2, "column": 1},
+        "start": {"line": 0, "character": 4},
+        "end": {"line": 1, "character": 0},
     }
 
 
@@ -33,8 +36,27 @@ def test_diagnostics_to_entries_handles_basic_fields():
     ]
     entries = utils.diagnostics_to_entries(diagnostics)
     assert entries[0]["message"] == "oops"
-    assert entries[0]["severity"] == 2
-    assert entries[0]["range"]["start"] == {"line": 1, "column": 1}
+    assert entries[0]["severity"] == "warning"
+    assert entries[0]["severityCode"] == 2
+    assert entries[0]["range"]["start"] == {"line": 0, "character": 0}
+
+
+def test_summarize_diagnostics_counts_by_severity():
+    summary = utils.summarize_diagnostics(
+        [
+            {"severity": "error"},
+            {"severity": "warning"},
+            {"severity": "warning"},
+            {"severity": "hint"},
+        ]
+    )
+    assert summary["count"] == 4
+    assert summary["bySeverity"] == {
+        "error": 1,
+        "warning": 2,
+        "hint": 1,
+    }
+    assert summary["has_errors"] is True
 
 
 def test_goal_to_payload_extracts_rendered_text():
@@ -60,6 +82,21 @@ def test_compute_pagination_defaults_to_full_range():
     start, end, meta = utils.compute_pagination(5, None, None)
     assert (start, end) == (1, 5)
     assert meta["has_more"] is False
+    assert "next_start_line" not in meta
+
+
+def test_file_identity_generates_sanitized_uri():
+    rel_path = "Foo\\Bar/Proof.lean"
+    abs_path = os.path.join(os.getcwd(), "Foo", "Bar", "Proof.lean")
+    identity = utils.file_identity(rel_path, abs_path)
+    assert identity["relative_path"] == "Foo/Bar/Proof.lean"
+    assert identity["uri"] == Path(abs_path).resolve().as_uri()
+
+
+def test_file_identity_without_absolute_path_omits_uri():
+    identity = utils.file_identity("relative/path.lean")
+    assert identity["relative_path"] == "relative/path.lean"
+    assert identity["uri"] == ""
 
 
 def test_format_diagnostics_includes_severity_source_and_code():
@@ -166,3 +203,39 @@ def test_output_capture_restores_after_exception():
 
     # stdout should still be usable after the context manager exits
     print("stdout restored")
+
+
+def test_extract_range_handles_virtual_document_end_line():
+    content = "first\nsecond\n"
+    result = utils.extract_range(
+        content,
+        {
+            "start": {"line": 1, "character": 0},
+            "end": {"line": 2, "character": 0},
+        },
+    )
+    assert result == "second\n"
+
+
+def test_extract_range_rejects_invalid_column():
+    content = "abc"
+    result = utils.extract_range(
+        content,
+        {
+            "start": {"line": 0, "character": 0},
+            "end": {"line": 0, "character": 5},
+        },
+    )
+    assert result == "Range out of bounds"
+
+
+def test_extract_range_allows_cursor_at_document_end():
+    content = "line\n"
+    result = utils.extract_range(
+        content,
+        {
+            "start": {"line": 1, "character": 0},
+            "end": {"line": 1, "character": 0},
+        },
+    )
+    assert result == ""

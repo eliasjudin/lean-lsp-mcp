@@ -1,5 +1,5 @@
 INSTRUCTIONS = """## General Rules
-- All line and column numbers are 1-indexed (use lean_file_contents if unsure).
+- Tool inputs use 1-indexed lines/columns; structured tool outputs follow 0-based LSP positions.
 - Always analyze/search context before each file edit.
 - This MCP does NOT make permanent file changes. Use other tools for editing.
 - Work iteratively: Small steps, intermediate sorries, frequent checks.

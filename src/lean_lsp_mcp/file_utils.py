@@ -1,3 +1,4 @@
+import hashlib
 import os
 from typing import Optional, Dict
 
@@ -57,21 +58,23 @@ def update_file(ctx: Context, rel_path: str) -> str:
         ctx.request_context.lifespan_context.lean_project_path, rel_path
     )
     file_content = get_file_contents(abs_path)
-    hashed_file = hash(file_content)
+    file_hash = hashlib.sha256(
+        file_content.encode("utf-8", "surrogatepass")
+    ).hexdigest()
 
     # Check if file_contents have changed
     file_content_hashes: Dict[str, str] = (
         ctx.request_context.lifespan_context.file_content_hashes
     )
     if rel_path not in file_content_hashes:
-        file_content_hashes[rel_path] = hashed_file
+        file_content_hashes[rel_path] = file_hash
         return file_content
 
-    elif hashed_file == file_content_hashes[rel_path]:
+    elif file_hash == file_content_hashes[rel_path]:
         return file_content
 
     # Update file_contents
-    file_content_hashes[rel_path] = hashed_file
+    file_content_hashes[rel_path] = file_hash
 
     # Reload file in LSP
     client: LeanLSPClient = ctx.request_context.lifespan_context.client

@@ -26,7 +26,12 @@ class DummyResponse:
 
 
 def make_ctx() -> SimpleNamespace:
-    lifespan = SimpleNamespace(rate_limit={"loogle": []})
+    lifespan = SimpleNamespace(
+        rate_limit={
+            "loogle": [],
+            "leansearch": [],
+        }
+    )
     return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=lifespan))
 
 
@@ -54,12 +59,15 @@ def test_loogle_handles_missing_doc(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.loogle(ctx=ctx, query="Real.sin", num_results=3)
+    response = server_module.loogle(ctx=ctx, query="Real.sin", num_results=3, format="verbose")
 
-    assert response["status"] == "ok"
-    results = response["data"]["results"]
+    assert response["isError"] is False
+    assert response["content"]
+    results = response["structuredContent"]["results"]
     assert len(results) == 1
     assert results[0]["name"] == "Real.sin"
+    assert "doc" not in results[0]
+    assert response["_meta"]["duration_ms"] >= 0
 
 
 def test_loogle_truncates_results_and_strips_doc(monkeypatch, server_module):
@@ -82,13 +90,57 @@ def test_loogle_truncates_results_and_strips_doc(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.loogle(ctx=ctx, query="demo", num_results=1)
+    response = server_module.loogle(ctx=ctx, query="demo", num_results=1, format="verbose")
 
-    assert response["status"] == "ok"
-    results = response["data"]["results"]
+    assert response["isError"] is False
+    results = response["structuredContent"]["results"]
     assert len(results) == 1
     assert results[0]["name"] == "foo"
     assert "doc" not in results[0]
+
+
+def test_loogle_defaults_to_compact(monkeypatch, server_module):
+    payload = {
+        "hits": [
+            {
+                "name": "foo",
+                "doc": "ignored",
+            }
+        ]
+    }
+
+    def fake_urlopen(_req, timeout=20):  # pragma: no cover - tested via tool call
+        return DummyResponse(payload)
+
+    monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
+
+    ctx = make_ctx()
+    response = server_module.loogle(ctx=ctx, query="demo", num_results=1)
+
+    assert response["isError"] is False
+    structured = response["structuredContent"]
+    assert structured["query"] == "demo"
+    assert structured["names"] == ["foo"]
+    assert "results" not in structured
+
+
+def test_loogle_returns_error_when_no_results(monkeypatch, server_module):
+    payload = {"hits": []}
+
+    def fake_urlopen(_req, timeout=20):  # pragma: no cover - tested via tool call
+        return DummyResponse(payload)
+
+    monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
+
+    ctx = make_ctx()
+    response = server_module.loogle(ctx=ctx, query="missing", num_results=2)
+
+    assert response["isError"] is True
+    assert response["content"][0]["text"] == "No results found."
+    structured = response["structuredContent"]
+    assert structured["category"] == "lean_loogle"
+    assert structured["code"] == server_module.ERROR_UNKNOWN
+    assert structured["details"]["query"] == "missing"
 
 
 def test_leansearch_handles_missing_docstring(monkeypatch, server_module):
@@ -109,10 +161,57 @@ def test_leansearch_handles_missing_docstring(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.leansearch(ctx=ctx, query="Foo", num_results=5)
+    response = server_module.leansearch(ctx=ctx, query="Foo", num_results=5, format="verbose")
 
-    assert response["status"] == "ok"
-    results = response["data"]["results"]
+    assert response["isError"] is False
+    results = response["structuredContent"]["results"]
     assert len(results) == 1
     assert results[0]["name"] == "Foo.bar"
     assert "docstring" not in results[0]
+
+
+def test_leansearch_defaults_to_compact(monkeypatch, server_module):
+    payload = [
+        [
+            {
+                "result": {
+                    "name": ["Foo", "bar"],
+                    "module_name": ["Mathlib", "Demo"],
+                }
+            }
+        ]
+    ]
+
+    def fake_urlopen(_req, timeout=20):  # pragma: no cover - exercised via tool call
+        return DummyResponse(payload)
+
+    monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
+
+    ctx = make_ctx()
+    response = server_module.leansearch(ctx=ctx, query="Foo", num_results=5)
+
+    assert response["isError"] is False
+    structured = response["structuredContent"]
+    assert structured["query"] == "Foo"
+    assert structured["names"] == ["Foo.bar"]
+    assert "results" not in structured
+
+
+def test_leansearch_returns_error_when_empty(monkeypatch, server_module):
+    payload = [[]]
+
+    def fake_urlopen(_req, timeout=20):  # pragma: no cover - exercised via tool call
+        return DummyResponse(payload)
+
+    monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
+
+    ctx = make_ctx()
+    response = server_module.leansearch(ctx=ctx, query="nothing", num_results=2)
+
+    assert response["isError"] is True
+    content = response["content"][0]
+    assert content["text"] == "No results found."
+    structured = response["structuredContent"]
+    assert structured["category"] == "lean_leansearch"
+    assert structured["code"] == server_module.ERROR_UNKNOWN
+    assert structured["details"]["query"] == "nothing"

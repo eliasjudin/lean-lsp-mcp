@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, TypedDict
+from typing import Dict, List, TypedDict
 
 # ----- Error codes ---------------------------------------------------------
 ERROR_BAD_REQUEST = "bad_request"
@@ -16,22 +16,42 @@ ERROR_UNKNOWN = "unknown"
 
 
 # ----- Shared structures ---------------------------------------------------
-class Position(TypedDict):
+class LSPPosition(TypedDict):
     line: int
-    column: int
+    character: int
 
 
-class Range(TypedDict):
-    start: Position
-    end: Position
+class LSPRange(TypedDict):
+    start: LSPPosition
+    end: LSPPosition
+
+
+class FileIdentity(TypedDict):
+    uri: str
+    relative_path: str
 
 
 class DiagnosticEntry(TypedDict, total=False):
     message: str
-    severity: int | None
-    range: Range | None
+    severity: str | None
+    severityCode: int | None
+    range: LSPRange | None
     source: str
     code: str | int
+    tags: List[str]
+    relatedInformation: List[Dict]
+
+
+class DiagnosticsSummary(TypedDict):
+    count: int
+    bySeverity: Dict[str, int]
+    has_errors: bool
+
+
+class DiagnosticsPayload(TypedDict):
+    file: FileIdentity
+    diagnostics: List[DiagnosticEntry]
+    summary: DiagnosticsSummary
 
 
 class GoalPayload(TypedDict, total=False):
@@ -41,39 +61,24 @@ class GoalPayload(TypedDict, total=False):
     pp: str
 
 
-class ErrorMeta(TypedDict, total=False):
-    code: str
-    retryable: bool
-
-
-class RateLimitMeta(TypedDict):
-    max_requests: int
-    per_seconds: int
-
-
-class ResponseMeta(TypedDict, total=False):
-    error: ErrorMeta
-    rate_limit: RateLimitMeta
-    pagination: "PaginationMeta"
-
-
-class PaginationMeta(TypedDict):
+class PaginationMeta(TypedDict, total=False):
     start_line: int
     end_line: int
     total_lines: int
     has_more: bool
     next_start_line: int | None
+    nextCursor: str
 
 
 __all__ = [
     "DiagnosticEntry",
-    "ErrorMeta",
+    "DiagnosticsPayload",
+    "DiagnosticsSummary",
+    "FileIdentity",
     "GoalPayload",
-    "Position",
-    "Range",
-    "RateLimitMeta",
+    "LSPPosition",
+    "LSPRange",
     "PaginationMeta",
-    "ResponseMeta",
     "ERROR_BAD_REQUEST",
     "ERROR_CLIENT_NOT_READY",
     "ERROR_INVALID_PATH",

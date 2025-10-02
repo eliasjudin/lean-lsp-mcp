@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-TOOL_SPEC_VERSION = "2024-06-21"
+TOOL_SPEC_VERSION = "2025-10-02"
 
 BASIC_TOOLS: List[Dict[str, Any]] = [
     {
@@ -13,6 +13,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
         "inputs": [
             {"name": "lean_project_path", "type": "string", "required": False},
             {"name": "clean", "type": "boolean", "required": False, "default": False},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "LeanBuildResult",
     },
@@ -24,6 +25,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "annotate_lines", "type": "boolean", "required": False, "default": True},
             {"name": "start_line", "type": "integer", "required": False},
             {"name": "line_count", "type": "integer", "required": False},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "FileContents",
     },
@@ -34,6 +36,13 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "file_path", "type": "string", "required": True},
             {"name": "start_line", "type": "integer", "required": False},
             {"name": "line_count", "type": "integer", "required": False},
+            {
+                "name": "format",
+                "type": "string",
+                "required": False,
+                "enum": ["compact", "verbose"],
+                "default": "compact"
+            },
         ],
         "response": "Diagnostics",
     },
@@ -44,6 +53,13 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "file_path", "type": "string", "required": True},
             {"name": "line", "type": "integer", "required": True},
             {"name": "column", "type": "integer", "required": False},
+            {
+                "name": "format",
+                "type": "string",
+                "required": False,
+                "enum": ["compact", "verbose"],
+                "default": "compact"
+            },
         ],
         "response": "Goal",
     },
@@ -54,6 +70,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "file_path", "type": "string", "required": True},
             {"name": "line", "type": "integer", "required": True},
             {"name": "column", "type": "integer", "required": False},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "Goal",
     },
@@ -64,6 +81,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "file_path", "type": "string", "required": True},
             {"name": "line", "type": "integer", "required": True},
             {"name": "column", "type": "integer", "required": True},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "Hover",
     },
@@ -75,6 +93,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "line", "type": "integer", "required": True},
             {"name": "column", "type": "integer", "required": True},
             {"name": "max_completions", "type": "integer", "required": False, "default": 32},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "Completions",
     },
@@ -84,6 +103,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
         "inputs": [
             {"name": "file_path", "type": "string", "required": True},
             {"name": "symbol", "type": "string", "required": True},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "Declaration",
     },
@@ -94,13 +114,17 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "file_path", "type": "string", "required": True},
             {"name": "line", "type": "integer", "required": True},
             {"name": "snippets", "type": "array", "items": {"type": "string"}, "required": True},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "MultiAttempt",
     },
     {
         "name": "lean_run_code",
         "description": "Run an isolated Lean snippet and report diagnostics.",
-        "inputs": [{"name": "code", "type": "string", "required": True}],
+        "inputs": [
+            {"name": "code", "type": "string", "required": True},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"}
+        ],
         "response": "RunCode",
     },
     {
@@ -109,6 +133,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
         "inputs": [
             {"name": "query", "type": "string", "required": True},
             {"name": "num_results", "type": "integer", "required": False, "default": 5},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "SearchResults",
         "rate_limit": {"category": "leansearch", "max": 3, "window_seconds": 30},
@@ -119,6 +144,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
         "inputs": [
             {"name": "query", "type": "string", "required": True},
             {"name": "num_results", "type": "integer", "required": False, "default": 8},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "SearchResults",
         "rate_limit": {"category": "loogle", "max": 3, "window_seconds": 30},
@@ -131,6 +157,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "line", "type": "integer", "required": True},
             {"name": "column", "type": "integer", "required": True},
             {"name": "num_results", "type": "integer", "required": False, "default": 5},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "SearchResults",
         "rate_limit": {"category": "lean_state_search", "max": 3, "window_seconds": 30},
@@ -143,6 +170,7 @@ BASIC_TOOLS: List[Dict[str, Any]] = [
             {"name": "line", "type": "integer", "required": True},
             {"name": "column", "type": "integer", "required": True},
             {"name": "num_results", "type": "integer", "required": False, "default": 32},
+            {"name": "format", "type": "string", "required": False, "enum": ["compact", "verbose"], "default": "compact"},
         ],
         "response": "SearchResults",
         "rate_limit": {"category": "hammer_premise", "max": 3, "window_seconds": 30},

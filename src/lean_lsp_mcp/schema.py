@@ -1,60 +1,53 @@
-"""Shared response schema helpers for Lean LSP MCP.
-
-Simplified to minimize response size:
-- No global schema version in responses.
-- Omit the ``meta`` field entirely when empty.
-"""
+"""Helpers for constructing MCP-native tool results."""
 
 from __future__ import annotations
 
-import os
-from typing import Any, Callable, Dict, MutableMapping
+from typing import Any, Iterable, Mapping, MutableMapping
 
-from lean_lsp_mcp.schema_types import ResponseMeta
-
-RESPONSE_FORMAT_ENV = "LEAN_LSP_MCP_RESPONSE_FORMAT"
-
-LegacyFormatter = Callable[[Dict[str, Any]], Any] | str | None
+ContentItem = Mapping[str, Any]
+StructuredContent = Mapping[str, Any]
+MetaMapping = Mapping[str, Any] | MutableMapping[str, Any]
 
 
-def _is_legacy_mode() -> bool:
-    return os.getenv(RESPONSE_FORMAT_ENV, "structured").lower() == "legacy"
+def mcp_result(
+    *,
+    content: Iterable[ContentItem],
+    structured: StructuredContent | None = None,
+    is_error: bool = False,
+    meta: MetaMapping | None = None,
+) -> dict[str, Any]:
+    """Return a CallToolResult-compatible payload.
 
-
-def make_response(
-    status: str,
-    data: Any = None,
-    meta: MutableMapping[str, Any] | ResponseMeta | None = None,
-    legacy_formatter: LegacyFormatter = None,
-) -> Any:
-    """Create a response envelope or fall back to legacy formatting.
-
-    Args:
-        status: Either "ok" or "error".
-        data: Tool specific payload.
-        meta: Optional metadata to attach.
-        legacy_formatter: Callable that receives the structured response and
-            returns the legacy payload (typically a string). If ``None`` and
-            legacy mode is requested the raw data is returned.
+    Parameters
+    ----------
+    content:
+        Iterable of MCP content blocks. The helper copies the items into a list so
+        callers can pass generators without leaking iterators.
+    structured:
+        Optional machine-readable payload exposed via ``structuredContent``.
+    is_error:
+        Whether the tool execution failed. When ``True`` callers should include a
+        descriptive human message as the first content item.
+    meta:
+        Optional metadata bag replicated into ``_meta`` when provided.
     """
 
-    # Build minimal envelope and only include meta if provided.
-    envelope: Dict[str, Any] = {"status": status, "data": data}
+    content_list = list(content)
+    if not content_list:
+        raise ValueError("mcp_result requires at least one content item")
+
+    result: dict[str, Any] = {
+        "content": content_list,
+        "isError": bool(is_error),
+    }
+
+    if structured is not None:
+        result["structuredContent"] = dict(structured)
+
     if meta:
-        # Avoid inserting empty meta objects to reduce tokens.
-        # Copy to a regular dict to ensure JSON-serializable structure.
-        response_meta: Dict[str, Any] = dict(meta)
-        if response_meta:
-            envelope["meta"] = response_meta
+        result["_meta"] = dict(meta)
 
-    if _is_legacy_mode():
-        if legacy_formatter is None:
-            return data
-        if isinstance(legacy_formatter, str):
-            return legacy_formatter
-        return legacy_formatter(envelope)
-
-    return envelope
+    return result
 
 
-__all__ = ["RESPONSE_FORMAT_ENV", "make_response"]
+__all__ = ["mcp_result"]
