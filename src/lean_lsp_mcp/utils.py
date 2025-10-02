@@ -53,16 +53,32 @@ class OutputCapture:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        os.dup2(self.original_stdout_fd, sys.stdout.fileno())
-        os.dup2(self.original_stderr_fd, sys.stderr.fileno())
-        os.close(self.original_stdout_fd)
-        os.close(self.original_stderr_fd)
+        try:
+            if self.original_stdout_fd is not None:
+                os.dup2(self.original_stdout_fd, sys.stdout.fileno())
+            if self.original_stderr_fd is not None:
+                os.dup2(self.original_stderr_fd, sys.stderr.fileno())
+        finally:
+            if self.original_stdout_fd is not None:
+                os.close(self.original_stdout_fd)
+                self.original_stdout_fd = None
+            if self.original_stderr_fd is not None:
+                os.close(self.original_stderr_fd)
+                self.original_stderr_fd = None
 
-        self.temp_file.flush()
-        self.temp_file.seek(0)
-        self.captured_output = self.temp_file.read()
-        self.temp_file.close()
-        os.unlink(self.temp_file.name)
+        if self.temp_file is not None:
+            try:
+                self.temp_file.flush()
+                self.temp_file.seek(0)
+                self.captured_output = self.temp_file.read()
+            finally:
+                name = self.temp_file.name
+                self.temp_file.close()
+                try:
+                    os.unlink(name)
+                except FileNotFoundError:  # pragma: no cover - best effort cleanup
+                    pass
+                self.temp_file = None
 
     def get_output(self):
         return self.captured_output

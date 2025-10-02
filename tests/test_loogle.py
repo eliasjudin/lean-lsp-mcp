@@ -89,3 +89,30 @@ def test_loogle_truncates_results_and_strips_doc(monkeypatch, server_module):
     assert len(results) == 1
     assert results[0]["name"] == "foo"
     assert "doc" not in results[0]
+
+
+def test_leansearch_handles_missing_docstring(monkeypatch, server_module):
+    payload = [
+        [
+            {
+                "result": {
+                    "name": ["Foo", "bar"],
+                    "module_name": ["Mathlib", "Demo"],
+                }
+            }
+        ]
+    ]
+
+    def fake_urlopen(_req, timeout=20):  # pragma: no cover - exercised via tool call
+        return DummyResponse(payload)
+
+    monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
+
+    ctx = make_ctx()
+    response = server_module.leansearch(ctx=ctx, query="Foo", num_results=5)
+
+    assert response["status"] == "ok"
+    results = response["data"]["results"]
+    assert len(results) == 1
+    assert results[0]["name"] == "Foo.bar"
+    assert "docstring" not in results[0]

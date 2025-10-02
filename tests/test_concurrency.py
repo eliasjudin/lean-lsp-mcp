@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
+from types import SimpleNamespace
 
 from conftest import load_from_src
 
@@ -55,3 +56,21 @@ def test_client_session_serializes_calls():
     client = ctx.request_context.lifespan_context.client
     assert client.calls == 5
     assert client.max_active == 1
+
+
+def _make_ctx() -> SimpleNamespace:
+    lifespan = SimpleNamespace(rate_limit={})
+    request_context = SimpleNamespace(lifespan_context=lifespan)
+    return SimpleNamespace(request_context=request_context)
+
+
+def test_rate_limited_allows_positional_ctx(monkeypatch):
+    ctx = _make_ctx()
+
+    @server.rate_limited("demo", max_requests=2, per_seconds=60)
+    def tool(ctx, value):
+        return value * 2
+
+    assert tool(ctx, 3) == 6
+    assert tool(ctx=ctx, value=4) == 8
+    assert tool.__doc__.startswith("Limit: 2req/60s.")

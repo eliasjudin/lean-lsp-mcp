@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from conftest import load_from_src
 
 utils = load_from_src("lean_lsp_mcp.utils")
@@ -147,3 +149,20 @@ def test_format_diagnostics_handles_missing_range():
 
     formatted = utils.format_diagnostics(diagnostics)
     assert formatted == ["[Error] No range\ninternal error"]
+
+
+def test_output_capture_restores_after_exception():
+    class Boom(Exception):
+        pass
+
+    capture = utils.OutputCapture()
+
+    with pytest.raises(Boom):
+        with capture:
+            print("hello from capture")
+            raise Boom()
+
+    assert "hello from capture" in capture.get_output()
+
+    # stdout should still be usable after the context manager exits
+    print("stdout restored")

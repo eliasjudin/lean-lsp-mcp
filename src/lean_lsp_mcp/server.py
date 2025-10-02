@@ -186,13 +186,23 @@ def error_response(
 # Rate limiting: n requests per m seconds
 def rate_limited(category: str, max_requests: int, per_seconds: int):
     def decorator(func):
+        docstring = func.__doc__ or ""
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            rate_limit = kwargs["ctx"].request_context.lifespan_context.rate_limit
+            ctx = kwargs.get("ctx")
+            if ctx is None:
+                if args:
+                    ctx = args[0]
+                else:  # pragma: no cover - defensive guard for misconfigured tools
+                    raise TypeError("rate-limited tool requires a Context as the first argument")
+
+            rate_limit = ctx.request_context.lifespan_context.rate_limit
+            timestamps = rate_limit.setdefault(category, [])
             current_time = int(time.time())
             rate_limit[category] = [
                 timestamp
-                for timestamp in rate_limit[category]
+                for timestamp in timestamps
                 if timestamp > current_time - per_seconds
             ]
             if len(rate_limit[category]) >= max_requests:
@@ -215,7 +225,10 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
             rate_limit[category].append(current_time)
             return func(*args, **kwargs)
 
-        wrapper.__doc__ = f"Limit: {max_requests}req/{per_seconds}s. " + wrapper.__doc__
+        limit_prefix = f"Limit: {max_requests}req/{per_seconds}s."
+        wrapper.__doc__ = (
+            f"{limit_prefix} {docstring}" if docstring else limit_prefix
+        )
         return wrapper
 
     return decorator
@@ -1156,9 +1169,15 @@ def leansearch(ctx: Context, query: str, num_results: int = 5) -> Any:
         results = [r["result"] for r in results]
 
         for result in results:
-            result.pop("docstring")
-            result["module_name"] = ".".join(result["module_name"])
-            result["name"] = ".".join(result["name"])
+            result.pop("docstring", None)
+
+            module_parts = result.get("module_name")
+            if isinstance(module_parts, list):
+                result["module_name"] = ".".join(module_parts)
+
+            name_parts = result.get("name")
+            if isinstance(name_parts, list):
+                result["name"] = ".".join(name_parts)
 
         payload = {"query": query, "results": results}
         return ok_response(payload, legacy_text=results)
@@ -1285,7 +1304,7 @@ def state_search(
             results = json.loads(response.read().decode("utf-8"))
 
         for result in results:
-            result.pop("rev")
+            result.pop("rev", None)
         payload = {
             "file": rel_path,
             "position": {"line": line, "column": column},
