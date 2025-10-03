@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -24,18 +26,54 @@ class StdoutToStderr:
 
     def __init__(self):
         self.original_stdout_fd = None
+        self._fallback = False
+        self._original_stdout = None
 
     def __enter__(self):
-        self.original_stdout_fd = os.dup(sys.stdout.fileno())
-        stderr_fd = sys.stderr.fileno()
-        os.dup2(stderr_fd, sys.stdout.fileno())
+        stdout = sys.stdout
+        try:
+            stdout_fd = stdout.fileno()
+            stderr_fd = sys.stderr.fileno()
+        except (AttributeError, io.UnsupportedOperation):
+            stdout_fd = None
+
+        if stdout_fd is None:
+            self._fallback = True
+            self._original_stdout = stdout
+
+            class _StderrWriter:
+                def __init__(self, original):
+                    self._original = original
+
+                def write(self, data):
+                    sys.stderr.write(data)
+
+                def flush(self):
+                    sys.stderr.flush()
+
+                def __getattr__(self, name):
+                    try:
+                        return getattr(self._original, name)
+                    except AttributeError:
+                        return getattr(sys.stderr, name)
+
+            sys.stdout = _StderrWriter(stdout)
+        else:
+            self.original_stdout_fd = os.dup(stdout_fd)
+            os.dup2(stderr_fd, stdout_fd)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.original_stdout_fd is not None:
-            os.dup2(self.original_stdout_fd, sys.stdout.fileno())
-            os.close(self.original_stdout_fd)
-            self.original_stdout_fd = None
+        if self._fallback:
+            if self._original_stdout is not None:
+                sys.stdout = self._original_stdout
+                self._original_stdout = None
+            self._fallback = False
+        else:
+            if self.original_stdout_fd is not None:
+                os.dup2(self.original_stdout_fd, sys.stdout.fileno())
+                os.close(self.original_stdout_fd)
+                self.original_stdout_fd = None
 
 
 class OutputCapture:
@@ -46,16 +84,50 @@ class OutputCapture:
         self.original_stderr_fd = None
         self.temp_file = None
         self.captured_output = ""
+        self._fallback = False
+        self._stdout_redirect = None
+        self._stderr_redirect = None
+        self._fallback_stream: io.StringIO | None = None
 
     def __enter__(self):
-        self.temp_file = tempfile.NamedTemporaryFile(mode="w+", delete=False)
-        self.original_stdout_fd = os.dup(sys.stdout.fileno())
-        self.original_stderr_fd = os.dup(sys.stderr.fileno())
-        os.dup2(self.temp_file.fileno(), sys.stdout.fileno())
-        os.dup2(self.temp_file.fileno(), sys.stderr.fileno())
+        try:
+            stdout_fd = sys.stdout.fileno()
+            stderr_fd = sys.stderr.fileno()
+        except (AttributeError, io.UnsupportedOperation):
+            stdout_fd = None
+
+        if stdout_fd is None:
+            self._fallback = True
+            self._fallback_stream = io.StringIO()
+            self._stdout_redirect = contextlib.redirect_stdout(self._fallback_stream)
+            self._stderr_redirect = contextlib.redirect_stderr(self._fallback_stream)
+            self._stdout_redirect.__enter__()
+            self._stderr_redirect.__enter__()
+        else:
+            self.temp_file = tempfile.NamedTemporaryFile(mode="w+", delete=False)
+            self.original_stdout_fd = os.dup(stdout_fd)
+            self.original_stderr_fd = os.dup(stderr_fd)
+            os.dup2(self.temp_file.fileno(), stdout_fd)
+            os.dup2(self.temp_file.fileno(), stderr_fd)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._fallback:
+            try:
+                if self._stderr_redirect is not None:
+                    self._stderr_redirect.__exit__(exc_type, exc_val, exc_tb)
+                if self._stdout_redirect is not None:
+                    self._stdout_redirect.__exit__(exc_type, exc_val, exc_tb)
+            finally:
+                self._stderr_redirect = None
+                self._stdout_redirect = None
+            if self._fallback_stream is not None:
+                self.captured_output = self._fallback_stream.getvalue()
+                self._fallback_stream.close()
+                self._fallback_stream = None
+            self._fallback = False
+            return
+
         try:
             if self.original_stdout_fd is not None:
                 os.dup2(self.original_stdout_fd, sys.stdout.fileno())
