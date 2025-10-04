@@ -20,7 +20,11 @@ from mcp.server.auth.settings import AuthSettings
 from leanclient import LeanLSPClient, DocumentContentChange
 
 from lean_lsp_mcp.client_utils import setup_client_for_file, startup_client
-from lean_lsp_mcp.file_utils import get_file_contents, update_file
+from lean_lsp_mcp.file_utils import (
+    get_file_contents,
+    get_relative_file_path,
+    update_file,
+)
 from lean_lsp_mcp.instructions import INSTRUCTIONS
 from lean_lsp_mcp.tool_spec import build_tool_spec
 from lean_lsp_mcp.schema import mcp_result
@@ -50,6 +54,7 @@ from lean_lsp_mcp.utils import (
     normalize_range,
     OptionalTokenVerifier,
     summarize_diagnostics,
+    uri_to_absolute_path,
 )
 
 
@@ -278,6 +283,25 @@ def _resource_item(uri: str, text: str, mime_type: str = "text/plain") -> Dict[s
     }
 
 
+def _json_item(structured: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a JSON resource content item that mirrors structuredContent.
+
+    This is placed first in the content array so generic MCP clients can
+    reliably access machine-readable results without special handling.
+    """
+    try:
+        json_text = json.dumps(structured, ensure_ascii=False)
+    except Exception:
+        # As a hard fallback, present an empty object to avoid breaking the
+        # invariant that content[0] is a JSON resource when structured exists.
+        json_text = "{}"
+    return _resource_item(
+        f"file:///_mcp_structured_{uuid.uuid4().hex}.json",
+        json_text,
+        mime_type="application/json",
+    )
+
+
 def _meta_payload(start_time: float, extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
     duration_ms = int(round((time.perf_counter() - start_time) * 1000))
     meta: Dict[str, Any] = {
@@ -297,7 +321,16 @@ def success_result(
     content: List[Dict[str, Any]] | None = None,
     meta_extra: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    payload = content if content else [_text_item(summary)]
+    # Machine-first: if we have structured content, expose it as the first
+    # content item (JSON resource). Append caller-provided content items next,
+    # or (if none provided) a human-readable summary.
+    payload: List[Dict[str, Any]] = []
+    if structured is not None:
+        payload.append(_json_item(structured))
+    if content:
+        payload.extend(content)
+    else:
+        payload.append(_text_item(summary))
     return mcp_result(
         content=payload,
         structured=structured,
@@ -321,8 +354,9 @@ def error_result(
         structured["category"] = category
     if details:
         structured["details"] = details
+    content: List[Dict[str, Any]] = [_json_item(structured), _text_item(message)]
     return mcp_result(
-        content=[_text_item(message)],
+        content=content,
         structured=structured,
         is_error=True,
         meta=_meta_payload(start_time, meta_extra),
@@ -518,8 +552,56 @@ def file_contents(
     """
     started = time.perf_counter()
     sanitized_path = _sanitize_path_label(file_path)
+    lifespan = ctx.request_context.lifespan_context
+    project_root = getattr(lifespan, "lean_project_path", None)
+    if not project_root:
+        client = getattr(lifespan, "client", None)
+        if client is not None:
+            project_root = getattr(client, "project_path", None)
+
+    expanded = os.path.expanduser(file_path)
+    candidates: List[str] = []
+
+    if expanded:
+        if os.path.isabs(expanded):
+            candidates.append(expanded)
+        else:
+            if project_root:
+                candidates.append(os.path.join(project_root, expanded))
+            candidates.append(os.path.join(os.getcwd(), expanded))
+
+    # Fallback: if all else fails, try the raw input as-is (handles empty strings gracefully).
+    if expanded and expanded not in candidates:
+        candidates.append(expanded)
+    elif not expanded:
+        candidates.append(expanded)
+
+    resolved_path = next((path for path in candidates if os.path.exists(path)), None)
+
+    if resolved_path is None:
+        message = (
+            f"File `{sanitized_path}` does not exist. Please check the path and try again."
+        )
+        return error_result(
+            message=message,
+            code=ERROR_INVALID_PATH,
+            details={"path": sanitized_path},
+            start_time=started,
+        )
+
+    resolved_path = os.path.abspath(resolved_path)
+
+    if os.path.isdir(resolved_path):
+        message = f"Path `{sanitized_path}` is a directory. Provide a Lean source file."
+        return error_result(
+            message=message,
+            code=ERROR_INVALID_PATH,
+            details={"path": sanitized_path, "kind": "directory"},
+            start_time=started,
+        )
+
     try:
-        data = get_file_contents(file_path)
+        data = get_file_contents(resolved_path)
     except FileNotFoundError:
         message = (
             f"File `{sanitized_path}` does not exist. Please check the path and try again."
@@ -528,6 +610,14 @@ def file_contents(
             message=message,
             code=ERROR_INVALID_PATH,
             details={"path": sanitized_path},
+            start_time=started,
+        )
+    except IsADirectoryError:
+        message = f"Path `{sanitized_path}` is a directory. Provide a Lean source file."
+        return error_result(
+            message=message,
+            code=ERROR_INVALID_PATH,
+            details={"path": sanitized_path, "kind": "directory"},
             start_time=started,
         )
 
@@ -545,6 +635,15 @@ def file_contents(
             details={"line_count": line_count},
             start_time=started,
         )
+
+    rel_path = None
+    if project_root:
+        try:
+            rel_path = get_relative_file_path(project_root, resolved_path)
+        except Exception:
+            rel_path = None
+    display_label = rel_path if rel_path else resolved_path
+    identity = file_identity(display_label, resolved_path)
 
     lines = data.split("\n")
     total_lines = len(lines)
@@ -570,8 +669,6 @@ def file_contents(
 
     slice_lines = lines[start - 1 : end] if total_lines else []
     slice_text = "\n".join(slice_lines)
-    identity = file_identity(sanitized_path, file_path)
-
     fmt = (format or "compact").lower()
     structured: Dict[str, Any] = {
         "file": {"uri": identity["uri"], "path": identity["relative_path"]}
@@ -1509,9 +1606,7 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, format: Optional
 
             declaration_entry = declaration[0]
             uri = declaration_entry.get("targetUri") or declaration_entry.get("uri")
-            abs_path = (
-                file_session.client._uri_to_abs(uri) if uri else None
-            )
+            abs_path = uri_to_absolute_path(uri)
             if not abs_path or not os.path.exists(abs_path):
                 return error_result(
                     message=f"Could not open declaration for `{symbol}`.",

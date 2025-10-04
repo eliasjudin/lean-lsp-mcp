@@ -323,6 +323,47 @@ def _absolute_path_to_uri(path: str) -> str:
     return path_obj.as_uri()
 
 
+def uri_to_absolute_path(uri: str | None) -> str | None:
+    """Best-effort conversion from a file URI to an absolute filesystem path."""
+
+    if not uri:
+        return None
+
+    try:
+        parsed = urlparse(uri)
+    except Exception:
+        return None
+
+    scheme = parsed.scheme
+    if scheme and scheme != "file":
+        return None
+
+    netloc = parsed.netloc or ""
+    path = parsed.path or ""
+
+    if netloc and netloc not in ("", "localhost"):
+        if os.name == "nt":
+            path = f"//{netloc}{path}"
+        else:
+            path = f"//{netloc}{path}"
+
+    path = unquote(path)
+
+    if os.name == "nt":
+        # Windows URIs often start with "/C:/..." – strip the leading slash.
+        if path.startswith("/") and len(path) >= 3 and path[2] == ":":
+            path = path[1:]
+        path = path.replace("/", "\\")
+
+    if not path:
+        return None
+
+    try:
+        return os.path.abspath(os.path.expanduser(path))
+    except (TypeError, ValueError):
+        return None
+
+
 def file_identity(relative_path: str, absolute_path: Optional[str] = None) -> FileIdentity:
     sanitized = _sanitize_relative_path(relative_path)
     uri = ""

@@ -99,6 +99,21 @@ def test_file_identity_without_absolute_path_omits_uri():
     assert identity["uri"] == ""
 
 
+def test_uri_to_absolute_path_roundtrip(tmp_path):
+    file_path = tmp_path / "Example With Space.lean"
+    file_path.write_text("example", encoding="utf-8")
+    uri = file_path.resolve().as_uri()
+
+    resolved = utils.uri_to_absolute_path(uri)
+
+    assert resolved == str(file_path.resolve())
+
+
+def test_uri_to_absolute_path_rejects_non_file_scheme():
+    assert utils.uri_to_absolute_path("https://example.com/foo") is None
+    assert utils.uri_to_absolute_path(None) is None
+
+
 def test_format_diagnostics_includes_severity_source_and_code():
     diagnostics = [
         {

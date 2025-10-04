@@ -136,7 +136,10 @@ def test_loogle_returns_error_when_no_results(monkeypatch, server_module):
     response = server_module.loogle(ctx=ctx, query="missing", num_results=2)
 
     assert response["isError"] is True
-    assert response["content"][0]["text"] == "No results found."
+    # JSON resource first, then message
+    assert response["content"][0]["type"] == "resource"
+    assert response["content"][0]["resource"]["mimeType"] == "application/json"
+    assert response["content"][1]["text"] == "No results found."
     structured = response["structuredContent"]
     assert structured["category"] == "lean_loogle"
     assert structured["code"] == server_module.ERROR_UNKNOWN
@@ -209,7 +212,8 @@ def test_leansearch_returns_error_when_empty(monkeypatch, server_module):
     response = server_module.leansearch(ctx=ctx, query="nothing", num_results=2)
 
     assert response["isError"] is True
-    content = response["content"][0]
+    # JSON resource first, then message
+    content = response["content"][1]
     assert content["text"] == "No results found."
     structured = response["structuredContent"]
     assert structured["category"] == "lean_leansearch"

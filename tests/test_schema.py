@@ -40,7 +40,11 @@ def test_success_result_includes_metadata(monkeypatch):
         meta_extra={"tool": "demo"},
     )
 
-    assert result["content"][0]["text"] == "done"
+    # JSON resource first, then human summary
+    first = result["content"][0]
+    assert first["type"] == "resource"
+    assert first["resource"]["mimeType"] == "application/json"
+    assert result["content"][1]["text"] == "done"
     assert result["structuredContent"]["value"] == 42
     assert result["isError"] is False
     meta = result["_meta"]
@@ -63,7 +67,10 @@ def test_error_result_sets_code_and_category(monkeypatch):
     )
 
     assert result["isError"] is True
-    assert result["content"] == [{"type": "text", "text": "boom"}]
+    # JSON resource first, then text message
+    assert result["content"][0]["type"] == "resource"
+    assert result["content"][0]["resource"]["mimeType"] == "application/json"
+    assert result["content"][1]["text"] == "boom"
     structured = result["structuredContent"]
     assert structured["message"] == "boom"
     assert structured["code"] == "sample"

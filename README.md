@@ -190,12 +190,14 @@ You can also often set these environment variables in your MCP client configurat
 ## Response Format
 
 Every tool returns a [Model Context Protocol](https://modelcontextprotocol.io/) ``CallToolResult`` envelope. The
-human-friendly summary lives in ``content`` while the complete machine-usable payload is exposed under
-``structuredContent``. Errors set ``isError: true`` and still include a descriptive text item.
+machine-usable payload is exposed under ``structuredContent`` and is also mirrored as the first item in
+``content`` as a JSON resource so generic MCP clients can consume results directly. A concise human summary follows.
+Errors set ``isError: true`` and still include a descriptive text item after the JSON resource.
 
 ```jsonc
 {
   "content": [
+    { "type": "resource", "resource": { "uri": "file:///_mcp_structured_deadbeef.json", "mimeType": "application/json", "text": "{ ... same as structuredContent ... }" } },
     { "type": "text", "text": "2 diagnostics (2 errors) in Formalization/xyz.lean" }
   ],
   "structuredContent": {
