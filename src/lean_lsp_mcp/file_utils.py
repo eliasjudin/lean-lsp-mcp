@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import hashlib
 import os
-from typing import Optional, Dict
+from typing import Dict, Optional, TYPE_CHECKING
 
 from mcp.server.fastmcp import Context
-from leanclient import LeanLSPClient
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from leanclient import LeanLSPClient
 
 
 def get_relative_file_path(lean_project_path: str, file_path: str) -> Optional[str]:

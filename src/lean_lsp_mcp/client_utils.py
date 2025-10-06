@@ -1,12 +1,18 @@
+from __future__ import annotations
+
 import os
 from threading import Lock
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import Context
 from mcp.server.fastmcp.utilities.logging import get_logger
-from leanclient import LeanLSPClient
 
 from lean_lsp_mcp.file_utils import get_relative_file_path
+from lean_lsp_mcp.leanclient_provider import ensure_leanclient_available
 from lean_lsp_mcp.utils import StdoutToStderr
+
+if TYPE_CHECKING:  # pragma: no cover - for type checkers only
+    from leanclient import LeanLSPClient
 
 
 logger = get_logger(__name__)
@@ -23,6 +29,9 @@ def startup_client(ctx: Context):
     if client_lock is None:
         client_lock = Lock()
         lifespan.client_lock = client_lock
+    # Fail fast if the optional dependency is missing so callers can surface a
+    # helpful tool error instead of crashing the server import.
+    LeanClientCls, _ = ensure_leanclient_available()
     with client_lock:
         lean_project_path = lifespan.lean_project_path
         if lean_project_path is None:
@@ -38,7 +47,7 @@ def startup_client(ctx: Context):
 
         with StdoutToStderr():
             try:
-                client = LeanLSPClient(
+                client = LeanClientCls(
                     lean_project_path, initial_build=False, print_warnings=False
                 )
                 logger.info(
@@ -49,7 +58,7 @@ def startup_client(ctx: Context):
                     "Lean LSP startup without build failed, retrying with initial build: %s",
                     e,
                 )
-                client = LeanLSPClient(
+                client = LeanClientCls(
                     lean_project_path, initial_build=True, print_warnings=False
                 )
                 logger.info(

@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from contextlib import asynccontextmanager, contextmanager
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -17,7 +19,6 @@ from types import SimpleNamespace
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.utilities.logging import get_logger
 from mcp.server.auth.settings import AuthSettings
-from leanclient import LeanLSPClient, DocumentContentChange
 
 from lean_lsp_mcp.client_utils import setup_client_for_file, startup_client
 from lean_lsp_mcp.file_utils import (
@@ -56,6 +57,14 @@ from lean_lsp_mcp.utils import (
     summarize_diagnostics,
     uri_to_absolute_path,
 )
+from lean_lsp_mcp.leanclient_provider import (
+    LeanclientNotInstalledError,
+    ensure_leanclient_available,
+    is_leanclient_available,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard for typing only
+    from leanclient import DocumentContentChange, LeanLSPClient
 
 
 try:  # pragma: no cover - metadata lookup may fail in tests
@@ -125,9 +134,10 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 mcp_kwargs = dict(
     name="Lean LSP",
     instructions=INSTRUCTIONS,
-    dependencies=["leanclient"],
-    lifespan=app_lifespan
+    lifespan=app_lifespan,
 )
+if is_leanclient_available():
+    mcp_kwargs["dependencies"] = ["leanclient"]
 
 auth_token = os.environ.get("LEAN_LSP_MCP_TOKEN")
 if auth_token:
@@ -232,7 +242,20 @@ def open_file_session(
     if column is not None:
         invalid_payload.setdefault("column", column)
 
-    rel_path = setup_client_for_file(ctx, file_path)
+    try:
+        rel_path = setup_client_for_file(ctx, file_path)
+    except LeanclientNotInstalledError as exc:
+        dependency_payload = dict(invalid_payload)
+        dependency_payload.setdefault("dependency", "leanclient")
+        raise ToolError(
+            error_result(
+                message=str(exc),
+                code=ERROR_CLIENT_NOT_READY,
+                category=category,
+                details=dependency_payload,
+                start_time=started,
+            )
+        )
     if not rel_path:
         raise ToolError(
             error_result(
@@ -465,56 +488,139 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
         )
 
     build_output = ""
+    build_output_parts: List[str] = []
     sanitized_project = _sanitize_path_label(lean_project_path)
+
+    def _record_output(text: str | None) -> None:
+        if text:
+            build_output_parts.append(text)
+
+    lifespan = ctx.request_context.lifespan_context
     try:
-        client: LeanLSPClient = ctx.request_context.lifespan_context.client
+        client: LeanLSPClient | None = lifespan.client
         if client:
             client.close()
-            ctx.request_context.lifespan_context.file_content_hashes.clear()
+            lifespan.file_content_hashes.clear()
 
         if clean:
-            subprocess.run(["lake", "clean"], cwd=lean_project_path, check=False)
+            clean_proc = subprocess.run(
+                ["lake", "clean"],
+                cwd=lean_project_path,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            _record_output(clean_proc.stdout)
+            _record_output(clean_proc.stderr)
             logger.info("Ran `lake clean`")
 
-        with OutputCapture() as output:
-            client = LeanLSPClient(
-                lean_project_path,
-                initial_build=True,
-                print_warnings=False,
-            )
-        logger.info("Built project and re-started LSP client")
+        if is_leanclient_available():
+            LeanClientCls, _ = ensure_leanclient_available()
+            with OutputCapture() as output:
+                client = LeanClientCls(
+                    lean_project_path,
+                    initial_build=True,
+                    print_warnings=False,
+                )
+            lifespan.client = client
+            logger.info("Built project and re-started LSP client")
+            _record_output(output.get_output())
+            build_output = "".join(build_output_parts)
+            summary = f"Build ok (clean={str(clean).lower()})"
+            fmt = (format or "compact").lower()
+            if fmt == "compact":
+                structured = {
+                    "project": {"path": sanitized_project},
+                    "clean": clean,
+                    "status": "ok",
+                    "lsp_restarted": True,
+                }
+                content_items = [_text_item(summary)]
+                if build_output and len(build_output) <= 4000:
+                    content_items.append(
+                        _resource_item(f"file:///{sanitized_project}", build_output)
+                    )
+                return success_result(
+                    summary=summary,
+                    structured=structured,
+                    start_time=started,
+                    content=content_items,
+                )
+            else:
+                structured = {
+                    "project_path": sanitized_project,
+                    "clean": clean,
+                    "output": build_output,
+                    "lsp_restarted": True,
+                }
+                return success_result(
+                    summary=summary,
+                    structured=structured,
+                    start_time=started,
+                )
 
-        ctx.request_context.lifespan_context.client = client
-        build_output = output.get_output()
-        summary = f"Build ok (clean={str(clean).lower()})"
+        # Fallback path: leanclient not installed; run `lake build` directly.
+        build_proc = subprocess.run(
+            ["lake", "build"],
+            cwd=lean_project_path,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        _record_output(build_proc.stdout)
+        _record_output(build_proc.stderr)
+        build_output = "".join(build_output_parts)
+        if build_proc.returncode != 0:
+            message = "`lake build` failed"
+            details = {
+                "project_path": sanitized_project,
+                "clean": clean,
+                "exit_code": build_proc.returncode,
+                "output": build_output,
+            }
+            return error_result(
+                message=message,
+                code=ERROR_IO_FAILURE,
+                details=details,
+                start_time=started,
+            )
+
+        lifespan.client = None
+        summary = f"Build ok (clean={str(clean).lower()}, leanclient missing)"
         fmt = (format or "compact").lower()
         if fmt == "compact":
             structured = {
                 "project": {"path": sanitized_project},
                 "clean": clean,
                 "status": "ok",
+                "lsp_restarted": False,
             }
             content_items = [_text_item(summary)]
             if build_output and len(build_output) <= 4000:
-                content_items.append(_resource_item(f"file:///{sanitized_project}", build_output))
+                content_items.append(
+                    _resource_item(f"file:///{sanitized_project}", build_output)
+                )
             return success_result(
                 summary=summary,
                 structured=structured,
                 start_time=started,
                 content=content_items,
             )
-        else:
-            structured = {
-                "project_path": sanitized_project,
-                "clean": clean,
-                "output": build_output,
-            }
-            return success_result(
-                summary=summary,
-                structured=structured,
-                start_time=started,
-            )
+
+        structured = {
+            "project_path": sanitized_project,
+            "clean": clean,
+            "output": build_output,
+            "lsp_restarted": False,
+        }
+        return success_result(
+            summary=summary,
+            structured=structured,
+            start_time=started,
+        )
     except Exception as exc:
+        if build_output_parts:
+            build_output = "".join(build_output_parts)
         message = f"Build failed: {exc}"
         details = {
             "project_path": sanitized_project,
@@ -1726,11 +1832,13 @@ def multi_attempt(
             try:
                 client.open_file(rel_path)
 
+                _, DocumentChangeCls = ensure_leanclient_available()
+
                 attempts: List[Dict[str, Any]] = []
                 snippet_summaries: List[str] = []
                 for snippet in snippets:
                     payload = snippet if snippet.endswith("\n") else f"{snippet}\n"
-                    change = DocumentContentChange(
+                    change = DocumentChangeCls(
                         payload,
                         [line - 1, 0],
                         [line, 0],
