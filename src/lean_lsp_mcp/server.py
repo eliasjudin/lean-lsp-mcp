@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from contextlib import asynccontextmanager, contextmanager
 from collections.abc import AsyncIterator, Iterator
@@ -490,6 +491,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
     build_output = ""
     build_output_parts: List[str] = []
     sanitized_project = _sanitize_path_label(lean_project_path)
+    project_uri = Path(lean_project_path).resolve().as_uri()
 
     def _record_output(text: str | None) -> None:
         if text:
@@ -537,9 +539,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
                 }
                 content_items = [_text_item(summary)]
                 if build_output and len(build_output) <= 4000:
-                    content_items.append(
-                        _resource_item(f"file:///{sanitized_project}", build_output)
-                    )
+                    content_items.append(_resource_item(project_uri, build_output))
                 return success_result(
                     summary=summary,
                     structured=structured,
@@ -597,9 +597,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
             }
             content_items = [_text_item(summary)]
             if build_output and len(build_output) <= 4000:
-                content_items.append(
-                    _resource_item(f"file:///{sanitized_project}", build_output)
-                )
+                content_items.append(_resource_item(project_uri, build_output))
             return success_result(
                 summary=summary,
                 structured=structured,
