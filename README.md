@@ -210,14 +210,12 @@ Errors set ``isError: true`` and still include a descriptive text item after the
         "range": {
           "start": { "line": 110, "character": 18 },
           "end": { "line": 110, "character": 34 }
-        },
-        "source": "Lean 4"
+        }
       }
     ],
     "summary": { "count": 2, "bySeverity": { "error": 2 }, "has_errors": true }
   },
-  "isError": false,
-  "_meta": { "duration_ms": 87, "request_id": "..." }
+  "isError": false
 }
 ```
 
@@ -256,14 +254,12 @@ Get all diagnostic messages for a Lean file. This includes infos, warnings and e
         "range": {
           "start": { "line": 19, "character": 41 },
           "end": { "line": 19, "character": 45 }
-        },
-        "source": "Lean 4"
+        }
       }
     ],
     "summary": { "count": 2, "bySeverity": { "error": 2 }, "has_errors": true }
   },
-  "isError": false,
-  "_meta": { "duration_ms": 52, "request_id": "..." }
+  "isError": false
 }
 ```
 
@@ -346,8 +342,7 @@ Run/compile an independent Lean code snippet/file and return the result or error
     ],
     "summary": { "count": 1, "bySeverity": { "info": 1 }, "has_errors": false }
   },
-  "isError": false,
-  "_meta": { "duration_ms": 71, "request_id": "..." }
+  "isError": false
 }
 ```
 
@@ -393,8 +388,7 @@ This tool is useful to screen different proof attempts before using the most pro
       }
     ]
   },
-  "isError": false,
-  "_meta": { "duration_ms": 192, "request_id": "..." }
+  "isError": false
 }
 ```
 
@@ -435,8 +429,7 @@ Search for theorems in Mathlib using [leansearch.net](https://leansearch.net) (n
       ...
     ]
   },
-  "isError": false,
-  "_meta": { "duration_ms": 134, "request_id": "..." }
+  "isError": false
 }
 ```
 </details>
@@ -470,8 +463,7 @@ Search for Lean definitions and theorems using [loogle.lean-lang.org](https://lo
       ...
     ]
   },
-  "isError": false,
-  "_meta": { "duration_ms": 98, "request_id": "..." }
+  "isError": false
 }
 ```
 </details>
@@ -511,8 +503,7 @@ Returns a list of relevant theorems.
       ...
     ]
   },
-  "isError": false,
-  "_meta": { "duration_ms": 241, "request_id": "..." }
+  "isError": false
 }
 ```
 </details>
@@ -553,8 +544,7 @@ Note: We use a simplified version, [LeanHammer](https://github.com/JOSHCLUNE/Lea
       ...
     ]
   },
-  "isError": false,
-  "_meta": { "duration_ms": 178, "request_id": "..." }
+  "isError": false
 }
 ```
 </details>

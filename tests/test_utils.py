@@ -114,7 +114,7 @@ def test_uri_to_absolute_path_rejects_non_file_scheme():
     assert utils.uri_to_absolute_path(None) is None
 
 
-def test_format_diagnostics_includes_severity_source_and_code():
+def test_format_diagnostics_includes_severity_and_code():
     diagnostics = [
         {
             "message": "undefined identifier",
@@ -131,7 +131,7 @@ def test_format_diagnostics_includes_severity_source_and_code():
 
     formatted = utils.format_diagnostics(diagnostics)
     assert formatted == [
-        "[Error] src/Foo.lean:3:5-3:10 (elaborator#unknownId)\nundefined identifier"
+        "[Error] src/Foo.lean:3:5-3:10 (unknownId)\nundefined identifier"
     ]
 
 
@@ -162,7 +162,7 @@ def test_format_diagnostics_indents_related_information():
     ]
 
     formatted = utils.format_diagnostics(diagnostics)
-    assert formatted[0].startswith("[Warning] 1:1-1:7 (linter#unused)\nunused variable")
+    assert formatted[0].startswith("[Warning] 1:1-1:7 (unused)\nunused variable")
     assert "  /tmp/Bar.lean:11:3-11:6" in formatted[0]
     assert "  introduced here" in formatted[0]
 

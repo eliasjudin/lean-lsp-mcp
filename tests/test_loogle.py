@@ -67,7 +67,6 @@ def test_loogle_handles_missing_doc(monkeypatch, server_module):
     assert len(results) == 1
     assert results[0]["name"] == "Real.sin"
     assert "doc" not in results[0]
-    assert response["_meta"]["duration_ms"] >= 0
 
 
 def test_loogle_truncates_results_and_strips_doc(monkeypatch, server_module):

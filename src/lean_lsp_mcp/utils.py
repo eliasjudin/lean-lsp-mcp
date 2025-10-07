@@ -476,9 +476,8 @@ def format_diagnostics(
         range_dict = diag.get("fullRange", diag.get("range"))
         location_label = _format_range_label(range_dict, diag)
 
-        source = diag.get("source")
         code = diag.get("code")
-        provenance_parts = [str(part) for part in (source, code) if part]
+        provenance_parts = [str(code)] if code else []
         provenance_suffix = f" ({'#'.join(provenance_parts)})" if provenance_parts else ""
 
         header = f"[{severity_display}] {location_label}{provenance_suffix}"

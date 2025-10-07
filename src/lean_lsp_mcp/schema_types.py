@@ -36,10 +36,11 @@ class DiagnosticEntry(TypedDict, total=False):
     severity: str | None
     severityCode: int | None
     range: LSPRange | None
-    source: str
     code: str | int
     tags: List[str]
     relatedInformation: List[Dict]
+    # LSP diagnostic source (e.g., "Lean 4", "linter", "elaborator")
+    source: str
 
 
 class DiagnosticsSummary(TypedDict):

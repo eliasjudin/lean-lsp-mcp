@@ -255,6 +255,7 @@ def open_file_session(
                 category=category,
                 details=dependency_payload,
                 start_time=started,
+                ctx=ctx,
             )
         )
     if not rel_path:
@@ -265,6 +266,7 @@ def open_file_session(
                 category=category,
                 details=invalid_payload,
                 start_time=started,
+                ctx=ctx,
             )
         )
 
@@ -285,6 +287,7 @@ def open_file_session(
                     category=category,
                     details=ready_payload,
                     start_time=started,
+                    ctx=ctx,
                 )
             )
 
@@ -326,14 +329,51 @@ def _json_item(structured: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
-def _meta_payload(start_time: float, extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    duration_ms = int(round((time.perf_counter() - start_time) * 1000))
-    meta: Dict[str, Any] = {
-        "duration_ms": duration_ms,
-        "request_id": uuid.uuid4().hex,
-    }
-    if extra:
-        meta.update({key: value for key, value in extra.items() if value is not None})
+def _extract_request_id(ctx: Context | None) -> str | None:
+    """Best-effort extraction of the MCP request identifier."""
+
+    if ctx is None:
+        return None
+
+    candidates = []
+    for attr in ("request_id", "requestId", "requestID", "id"):
+        value = getattr(ctx, attr, None)
+        if value:
+            return str(value)
+
+    request_context = getattr(ctx, "request_context", None)
+    if request_context is None:
+        return None
+
+    for attr in ("request_id", "requestId", "requestID", "id"):
+        value = getattr(request_context, attr, None)
+        if value:
+            return str(value)
+
+    rpc_request = getattr(request_context, "rpc_request", None)
+    if rpc_request is not None:
+        for attr in ("request_id", "requestId", "requestID", "id"):
+            value = getattr(rpc_request, attr, None)
+            if value:
+                return str(value)
+
+    rpc_request_id = getattr(request_context, "rpc_request_id", None)
+    if rpc_request_id:
+        return str(rpc_request_id)
+
+    return None
+
+
+def _build_meta(ctx: Context | None, start_time: float) -> Dict[str, Any]:
+    """Construct the `_meta` payload for tool responses."""
+
+    duration_ms = max(int((time.perf_counter() - start_time) * 1000), 0)
+    meta: Dict[str, Any] = {"duration_ms": duration_ms}
+
+    request_id = _extract_request_id(ctx)
+    if request_id:
+        meta["request_id"] = request_id
+
     return meta
 
 
@@ -342,8 +382,8 @@ def success_result(
     summary: str,
     structured: Dict[str, Any] | None,
     start_time: float,
+    ctx: Context | None = None,
     content: List[Dict[str, Any]] | None = None,
-    meta_extra: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     # Machine-first: if we have structured content, expose it as the first
     # content item (JSON resource). Append caller-provided content items next,
@@ -358,7 +398,7 @@ def success_result(
     return mcp_result(
         content=payload,
         structured=structured,
-        meta=_meta_payload(start_time, meta_extra),
+        meta=_build_meta(ctx, start_time),
     )
 
 
@@ -366,10 +406,10 @@ def error_result(
     *,
     message: str,
     start_time: float,
+    ctx: Context | None = None,
     code: str | None = None,
     category: str | None = None,
     details: Dict[str, Any] | None = None,
-    meta_extra: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     structured: Dict[str, Any] = {"message": message}
     if code:
@@ -383,7 +423,7 @@ def error_result(
         content=content,
         structured=structured,
         is_error=True,
-        meta=_meta_payload(start_time, meta_extra),
+        meta=_build_meta(ctx, start_time),
     )
 
 
@@ -443,6 +483,7 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
                     category=category,
                     details={"max_requests": max_requests, "per_seconds": per_seconds},
                     start_time=started,
+                    ctx=ctx,
                 )
             rate_limit[category].append(current_time)
             return func(*args, **kwargs)
@@ -486,6 +527,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
             message=message,
             code=ERROR_BAD_REQUEST,
             start_time=started,
+            ctx=ctx,
         )
 
     build_output = ""
@@ -544,6 +586,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
                     summary=summary,
                     structured=structured,
                     start_time=started,
+                    ctx=ctx,
                     content=content_items,
                 )
             else:
@@ -557,6 +600,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
                     summary=summary,
                     structured=structured,
                     start_time=started,
+                    ctx=ctx,
                 )
 
         # Fallback path: leanclient not installed; run `lake build` directly.
@@ -583,6 +627,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
                 code=ERROR_IO_FAILURE,
                 details=details,
                 start_time=started,
+                ctx=ctx,
             )
 
         lifespan.client = None
@@ -602,6 +647,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
                 summary=summary,
                 structured=structured,
                 start_time=started,
+                ctx=ctx,
                 content=content_items,
             )
 
@@ -615,6 +661,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
             summary=summary,
             structured=structured,
             start_time=started,
+            ctx=ctx,
         )
     except Exception as exc:
         if build_output_parts:
@@ -630,6 +677,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
             code=ERROR_IO_FAILURE,
             details=details,
             start_time=started,
+            ctx=ctx,
         )
 
 
@@ -646,7 +694,9 @@ def file_contents(
     """Get the text contents of a Lean file, optionally with line numbers.
 
     Args:
-        file_path (str): Abs path to Lean file
+        file_path (str): Path to the Lean file. Absolute paths are recommended. Relative
+            paths are resolved against the configured Lean project root (if available)
+            or else the current working directory.
         annotate_lines (bool, optional): Annotate lines with line numbers. Defaults to True.
         start_line (int, optional): 1-based line to start from.
         line_count (int, optional): Number of lines to return from ``start_line``.
@@ -683,14 +733,42 @@ def file_contents(
     resolved_path = next((path for path in candidates if os.path.exists(path)), None)
 
     if resolved_path is None:
-        message = (
-            f"File `{sanitized_path}` does not exist. Please check the path and try again."
-        )
+        # Provide a more actionable message when a relative path is given but no
+        # project root is configured (and the CWD candidate also failed).
+        is_relative = bool(expanded) and not os.path.isabs(expanded)
+        project_label = _sanitize_path_label(project_root) if project_root else None
+
+        if is_relative and not project_root:
+            message = (
+                f"File `{sanitized_path}` does not exist relative to the current directory, "
+                "and no Lean project root is configured. Provide an absolute path, or set "
+                "`LEAN_PROJECT_PATH` / run `lean_build` for your project, then try again."
+            )
+        elif is_relative and project_root:
+            message = (
+                f"File `{sanitized_path}` was not found under the project root "
+                f"`{project_label}`. Check the path or provide an absolute path."
+            )
+        else:
+            message = (
+                f"File `{sanitized_path}` does not exist. Please check the path and try again."
+            )
+
+        details: Dict[str, Any] = {"path": sanitized_path}
+        # Include additional context to aid debugging without breaking existing consumers.
+        if is_relative:
+            details["project_root"] = project_label
+            # Sanitize candidate paths to avoid leaking absolute host paths.
+            details["candidates"] = [
+                _sanitize_path_label(p) for p in candidates
+            ]
+
         return error_result(
             message=message,
             code=ERROR_INVALID_PATH,
-            details={"path": sanitized_path},
+            details=details,
             start_time=started,
+            ctx=ctx,
         )
 
     resolved_path = os.path.abspath(resolved_path)
@@ -702,6 +780,7 @@ def file_contents(
             code=ERROR_INVALID_PATH,
             details={"path": sanitized_path, "kind": "directory"},
             start_time=started,
+            ctx=ctx,
         )
 
     try:
@@ -715,6 +794,7 @@ def file_contents(
             code=ERROR_INVALID_PATH,
             details={"path": sanitized_path},
             start_time=started,
+            ctx=ctx,
         )
     except IsADirectoryError:
         message = f"Path `{sanitized_path}` is a directory. Provide a Lean source file."
@@ -723,6 +803,7 @@ def file_contents(
             code=ERROR_INVALID_PATH,
             details={"path": sanitized_path, "kind": "directory"},
             start_time=started,
+            ctx=ctx,
         )
 
     if start_line is not None and start_line < 1:
@@ -731,6 +812,7 @@ def file_contents(
             code=ERROR_BAD_REQUEST,
             details={"start_line": start_line},
             start_time=started,
+            ctx=ctx,
         )
     if line_count is not None and line_count < 1:
         return error_result(
@@ -738,6 +820,7 @@ def file_contents(
             code=ERROR_BAD_REQUEST,
             details={"line_count": line_count},
             start_time=started,
+            ctx=ctx,
         )
 
     rel_path = None
@@ -758,6 +841,7 @@ def file_contents(
             code=ERROR_BAD_REQUEST,
             details={"start_line": start_line, "total_lines": total_lines},
             start_time=started,
+            ctx=ctx,
         )
     if total_lines == 0 and start_line and start_line > 1:
         return error_result(
@@ -765,6 +849,7 @@ def file_contents(
             code=ERROR_BAD_REQUEST,
             details={"start_line": start_line, "total_lines": total_lines},
             start_time=started,
+            ctx=ctx,
         )
 
     start, end, pagination_meta = compute_pagination(
@@ -823,6 +908,7 @@ def file_contents(
         summary=summary,
         structured=structured,
         start_time=started,
+        ctx=ctx,
         content=[_text_item(summary)] + content_items if content_items else None,
     )
 
@@ -856,6 +942,7 @@ def diagnostic_messages(
                     code=ERROR_BAD_REQUEST,
                     details={"start_line": start_line},
                     start_time=started,
+                    ctx=ctx,
                 )
             if line_count is not None and line_count < 1:
                 return error_result(
@@ -863,6 +950,7 @@ def diagnostic_messages(
                     code=ERROR_BAD_REQUEST,
                     details={"line_count": line_count},
                     start_time=started,
+                    ctx=ctx,
                 )
 
             identity = file_session.identity
@@ -874,6 +962,7 @@ def diagnostic_messages(
                     code=ERROR_BAD_REQUEST,
                     details={"start_line": start_line, "total_lines": total_lines},
                     start_time=started,
+                    ctx=ctx,
                 )
             if total_lines == 0 and start_line and start_line > 1:
                 return error_result(
@@ -881,6 +970,7 @@ def diagnostic_messages(
                     code=ERROR_BAD_REQUEST,
                     details={"start_line": start_line, "total_lines": total_lines},
                     start_time=started,
+                    ctx=ctx,
                 )
 
             start, end, pagination_meta = compute_pagination(
@@ -936,18 +1026,6 @@ def diagnostic_messages(
                 messages: List[str] = []
                 diags_compact: List[Dict[str, Any]] = []
 
-                # Try to detect a single common source
-                sources = {e.get("source") for e in entries if e.get("source")}
-                src_value: Any
-                if len(sources) == 1:
-                    src_value = next(iter(sources))
-                elif len(sources) == 0:
-                    src_value = None
-                else:
-                    src_value = sorted(
-                        s for s in sources if isinstance(s, str)
-                    )  # multi-source
-
                 for e in entries:
                     msg = e.get("message", "")
                     if msg not in msg_index:
@@ -1001,8 +1079,6 @@ def diagnostic_messages(
                     "messages": messages,
                     "diags": diags_compact,
                 }
-                if src_value:
-                    structured["src"] = src_value
                 if include_pagination:
                     structured["pagination"] = pagination_meta
             else:
@@ -1018,6 +1094,7 @@ def diagnostic_messages(
                 summary=summary_text,
                 structured=structured,
                 start_time=started,
+                ctx=ctx,
             )
     except ToolError as exc:
         return exc.payload
@@ -1069,6 +1146,7 @@ def goal(
                         code=ERROR_NOT_GOAL_POSITION,
                         details={"file": identity["relative_path"], "line": line},
                         start_time=started,
+                        ctx=ctx,
                     )
 
                 line_text = lines[line - 1]
@@ -1098,12 +1176,14 @@ def goal(
                             structured=structured,
                             content=[_text_item(summary_text)],
                             start_time=started,
+                            ctx=ctx,
                         )
                     return error_result(
                         message="No goals on that line.",
                         code=ERROR_NO_GOAL,
                         details={"file": identity["relative_path"], "line": line},
                         start_time=started,
+                        ctx=ctx,
                     )
 
                 results = []
@@ -1179,6 +1259,7 @@ def goal(
                     structured=structured,
                     content=content_items,
                     start_time=started,
+                    ctx=ctx,
                 )
 
             if column < 1:
@@ -1187,6 +1268,7 @@ def goal(
                     code=ERROR_BAD_REQUEST,
                     details={"file": identity["relative_path"], "line": line, "column": column},
                     start_time=started,
+                    ctx=ctx,
                 )
 
             goal_value = client.get_goal(rel_path, line - 1, column - 1)
@@ -1212,6 +1294,7 @@ def goal(
                         structured=structured,
                         content=[_text_item(summary_text)],
                         start_time=started,
+                        ctx=ctx,
                     )
                 return error_result(
                     message="No goals at that position.",
@@ -1222,6 +1305,7 @@ def goal(
                         "column": column,
                     },
                     start_time=started,
+                    ctx=ctx,
                 )
 
             context_line = format_line(content, line, column)
@@ -1262,6 +1346,7 @@ def goal(
                 structured=structured,
                 content=content_items,
                 start_time=started,
+                ctx=ctx,
             )
     except ToolError as exc:
         return exc.payload
@@ -1303,6 +1388,7 @@ def term_goal(
                         code=ERROR_NOT_GOAL_POSITION,
                         details={"file": identity["relative_path"], "line": line},
                         start_time=started,
+                        ctx=ctx,
                     )
                 target_column = len(lines[line - 1])
 
@@ -1312,6 +1398,7 @@ def term_goal(
                     code=ERROR_NOT_GOAL_POSITION,
                     details={"file": identity["relative_path"], "line": line},
                     start_time=started,
+                    ctx=ctx,
                 )
 
             if target_column is None or target_column < 1:
@@ -1324,6 +1411,7 @@ def term_goal(
                         "column": target_column,
                     },
                     start_time=started,
+                    ctx=ctx,
                 )
 
             term_goal_value = file_session.client.get_term_goal(
@@ -1340,6 +1428,7 @@ def term_goal(
                         "column": target_column,
                     },
                     start_time=started,
+                    ctx=ctx,
                 )
 
             rendered = term_goal_value.get("goal")
@@ -1378,6 +1467,7 @@ def term_goal(
                 structured=structured,
                 content=content_items,
                 start_time=started,
+                ctx=ctx,
             )
     except ToolError as exc:
         return exc.payload
@@ -1420,6 +1510,7 @@ def hover(ctx: Context, file_path: str, line: int, column: int, format: Optional
                         "context": context_line,
                     },
                     start_time=started,
+                    ctx=ctx,
                 )
 
             h_range = hover_info.get("range")
@@ -1530,6 +1621,7 @@ def hover(ctx: Context, file_path: str, line: int, column: int, format: Optional
                 structured=structured,
                 content=content_items,
                 start_time=started,
+                ctx=ctx,
             )
     except ToolError as exc:
         return exc.payload
@@ -1582,6 +1674,7 @@ def completions(
                         "column": column,
                     },
                     start_time=started,
+                    ctx=ctx,
                 )
 
             lines = content.splitlines()
@@ -1655,6 +1748,7 @@ def completions(
                 structured=structured,
                 content=content_items,
                 start_time=started,
+                ctx=ctx,
             )
     except ToolError as exc:
         return exc.payload
@@ -1691,6 +1785,7 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, format: Optional
                         "symbol": symbol,
                     },
                     start_time=started,
+                    ctx=ctx,
                 )
 
             declaration = file_session.client.get_declarations(
@@ -1706,6 +1801,7 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, format: Optional
                         "symbol": symbol,
                     },
                     start_time=started,
+                    ctx=ctx,
                 )
 
             declaration_entry = declaration[0]
@@ -1721,6 +1817,7 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, format: Optional
                         "path": _sanitize_path_label(abs_path or uri or ""),
                     },
                     start_time=started,
+                    ctx=ctx,
                 )
 
             file_content = get_file_contents(abs_path)
@@ -1776,6 +1873,7 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, format: Optional
                 structured=structured,
                 content=content_items,
                 start_time=started,
+                ctx=ctx,
             )
     except ToolError as exc:
         return exc.payload
@@ -1812,6 +1910,7 @@ def multi_attempt(
             category="lean_multi_attempt",
             details={"line": line},
             start_time=started,
+            ctx=ctx,
         )
 
     try:
@@ -1922,6 +2021,7 @@ def multi_attempt(
                     structured=structured,
                     content=content_items,
                     start_time=started,
+                    ctx=ctx,
                 )
             finally:
                 try:
@@ -1959,6 +2059,7 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
             category="lean_run_code",
             details={"code_length": len(code)},
             start_time=started,
+            ctx=ctx,
         )
 
     rel_path = f"_mcp_snippet_{uuid.uuid4().hex}.lean"
@@ -1975,6 +2076,7 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
             category="lean_run_code",
             details={"path": _sanitize_path_label(abs_path), "error": str(e)},
             start_time=started,
+            ctx=ctx,
         )
 
     # Ensure a Lean client is ready before asking for diagnostics.
@@ -1992,6 +2094,7 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
             category="lean_run_code",
             details={"path": _sanitize_path_label(abs_path), "error": str(e)},
             start_time=started,
+            ctx=ctx,
         )
 
     diagnostics_payload: List[Dict[str, Any]] | None = None
@@ -2013,6 +2116,7 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
                 category="lean_run_code",
                 details={"path": _sanitize_path_label(abs_path)},
                 start_time=started,
+                ctx=ctx,
             )
 
         try:
@@ -2045,6 +2149,7 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
             category="lean_run_code",
             details={"path": _sanitize_path_label(abs_path), "error": remove_error},
             start_time=started,
+            ctx=ctx,
         )
     if close_error:
         return error_result(
@@ -2053,6 +2158,7 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
             category="lean_run_code",
             details={"path": _sanitize_path_label(abs_path), "error": close_error},
             start_time=started,
+            ctx=ctx,
         )
 
     identity = _identity_for_rel_path(ctx, rel_path)
@@ -2064,14 +2170,6 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
         msg_index: Dict[str, int] = {}
         messages: List[str] = []
         diags_compact: List[Dict[str, Any]] = []
-        sources = {e.get("source") for e in diagnostics_entries if e.get("source")}
-        src_value: Any
-        if len(sources) == 1:
-            src_value = next(iter(sources))
-        elif len(sources) == 0:
-            src_value = None
-        else:
-            src_value = sorted(s for s in sources if isinstance(s, str))
         for e in diagnostics_entries:
             msg = e.get("message", "")
             if msg not in msg_index:
@@ -2110,8 +2208,6 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
             "messages": messages,
             "diags": diags_compact,
         }
-        if src_value:
-            structured["src"] = src_value
     else:
         structured = {
             "file": identity,
@@ -2135,6 +2231,7 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
         structured=structured,
         content=content_items,
         start_time=started,
+        ctx=ctx,
     )
 
 
@@ -2156,6 +2253,7 @@ def tool_spec(ctx: Context, format: Optional[str] = "compact") -> Any:
             structured=compact,
             content=[_text_item(summary)],
             start_time=started,
+            ctx=ctx,
         )
     else:
         return success_result(
@@ -2163,6 +2261,7 @@ def tool_spec(ctx: Context, format: Optional[str] = "compact") -> Any:
             structured=spec,
             content=[_text_item(summary)],
             start_time=started,
+            ctx=ctx,
         )
 
 
@@ -2209,6 +2308,7 @@ def leansearch(ctx: Context, query: str, num_results: int = 5, format: Optional[
                 category="lean_leansearch",
                 details={"query": query, "num_results": num_results},
                 start_time=started,
+                ctx=ctx,
             )
         results = results[0][:num_results]
         results = [r["result"] for r in results]
@@ -2237,6 +2337,7 @@ def leansearch(ctx: Context, query: str, num_results: int = 5, format: Optional[
             summary=summary,
             structured=structured,
             start_time=started,
+            ctx=ctx,
         )
     except Exception as e:
         return error_result(
@@ -2245,6 +2346,7 @@ def leansearch(ctx: Context, query: str, num_results: int = 5, format: Optional[
             category="lean_leansearch",
             details={"error": str(e), "query": query},
             start_time=started,
+            ctx=ctx,
         )
 
 
@@ -2287,6 +2389,7 @@ def loogle(ctx: Context, query: str, num_results: int = 8, format: Optional[str]
                 category="lean_loogle",
                 details={"query": query, "num_results": num_results},
                 start_time=started,
+                ctx=ctx,
             )
 
         results = results["hits"][:num_results]
@@ -2297,6 +2400,7 @@ def loogle(ctx: Context, query: str, num_results: int = 8, format: Optional[str]
                 category="lean_loogle",
                 details={"query": query, "num_results": num_results},
                 start_time=started,
+                ctx=ctx,
             )
         for result in results:
             result.pop("doc", None)
@@ -2313,6 +2417,7 @@ def loogle(ctx: Context, query: str, num_results: int = 8, format: Optional[str]
             summary=summary,
             structured=structured,
             start_time=started,
+            ctx=ctx,
         )
     except Exception as e:
         return error_result(
@@ -2321,6 +2426,7 @@ def loogle(ctx: Context, query: str, num_results: int = 8, format: Optional[str]
             category="lean_loogle",
             details={"error": str(e), "query": query},
             start_time=started,
+            ctx=ctx,
         )
 
 
@@ -2372,6 +2478,7 @@ def state_search(
                 "column": column,
             },
             start_time=started,
+            ctx=ctx,
         )
 
     data = {
@@ -2404,6 +2511,7 @@ def state_search(
                     "limit": num_results,
                 },
                 start_time=started,
+                ctx=ctx,
             )
 
         fmt = _normalize_format(format)
@@ -2434,6 +2542,7 @@ def state_search(
             summary=summary,
             structured=structured,
             start_time=started,
+            ctx=ctx,
         )
     except Exception as e:
         return error_result(
@@ -2447,6 +2556,7 @@ def state_search(
                 "file": identity["relative_path"],
             },
             start_time=started,
+            ctx=ctx,
         )
 
 
@@ -2496,6 +2606,7 @@ def hammer_premise(
                 "column": column,
             },
             start_time=started,
+            ctx=ctx,
         )
 
     data = {
@@ -2547,6 +2658,7 @@ def hammer_premise(
             summary=summary,
             structured=structured,
             start_time=started,
+            ctx=ctx,
         )
     except Exception as e:
         return error_result(
@@ -2560,6 +2672,7 @@ def hammer_premise(
                 "column": column,
             },
             start_time=started,
+            ctx=ctx,
         )
 
 

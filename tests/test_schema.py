@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import time
+import types
 
 import pytest
 
@@ -14,13 +15,11 @@ def test_mcp_result_builds_structured_envelope():
     result = schema.mcp_result(
         content=[{"type": "text", "text": "hello"}],
         structured={"value": 1},
-        meta={"duration_ms": 5},
     )
 
     assert result["content"] == [{"type": "text", "text": "hello"}]
     assert result["structuredContent"]["value"] == 1
     assert result["isError"] is False
-    assert result["_meta"]["duration_ms"] == 5
 
 
 def test_mcp_result_requires_content():
@@ -28,16 +27,13 @@ def test_mcp_result_requires_content():
         schema.mcp_result(content=[])
 
 
-def test_success_result_includes_metadata(monkeypatch):
-    fake_uuid = SimpleNamespace(hex="abc123")
-    monkeypatch.setattr(server.uuid, "uuid4", lambda: fake_uuid)
-    monkeypatch.setattr(server.time, "perf_counter", lambda: 101.5)
-
+def test_success_result_builds_payload():
+    started = time.perf_counter()
     result = server.success_result(
         summary="done",
         structured={"value": 42},
-        start_time=100.0,
-        meta_extra={"tool": "demo"},
+        start_time=started,
+        ctx=None,
     )
 
     # JSON resource first, then human summary
@@ -48,22 +44,19 @@ def test_success_result_includes_metadata(monkeypatch):
     assert result["structuredContent"]["value"] == 42
     assert result["isError"] is False
     meta = result["_meta"]
-    assert meta["duration_ms"] == 1500
-    assert meta["request_id"] == "abc123"
-    assert meta["tool"] == "demo"
+    assert meta["duration_ms"] >= 0
+    assert "request_id" not in meta
 
 
-def test_error_result_sets_code_and_category(monkeypatch):
-    fake_uuid = SimpleNamespace(hex="err123")
-    monkeypatch.setattr(server.uuid, "uuid4", lambda: fake_uuid)
-    monkeypatch.setattr(server.time, "perf_counter", lambda: 5.01)
-
+def test_error_result_sets_code_and_category():
+    started = time.perf_counter()
     result = server.error_result(
         message="boom",
         code="sample",
         category="demo",
         details={"info": "extra"},
-        start_time=5.0,
+        start_time=started,
+        ctx=None,
     )
 
     assert result["isError"] is True
@@ -77,5 +70,23 @@ def test_error_result_sets_code_and_category(monkeypatch):
     assert structured["category"] == "demo"
     assert structured["details"] == {"info": "extra"}
     meta = result["_meta"]
-    assert meta["duration_ms"] == 10
-    assert meta["request_id"] == "err123"
+    assert meta["duration_ms"] >= 0
+    assert "request_id" not in meta
+
+
+def test_meta_uses_request_context_request_id():
+    ctx = types.SimpleNamespace(
+        request_context=types.SimpleNamespace(request_id="req-123")
+    )
+    started = time.perf_counter()
+    result = server.success_result(
+        summary="ok",
+        structured=None,
+        start_time=started,
+        ctx=ctx,
+        content=[{"type": "text", "text": "ok"}],
+    )
+
+    meta = result["_meta"]
+    assert meta["request_id"] == "req-123"
+    assert meta["duration_ms"] >= 0

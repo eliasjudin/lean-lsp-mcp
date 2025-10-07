@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, MutableMapping
+from typing import Any, Iterable, Mapping
 
 ContentItem = Mapping[str, Any]
 StructuredContent = Mapping[str, Any]
-MetaMapping = Mapping[str, Any] | MutableMapping[str, Any]
 
 
 def mcp_result(
@@ -14,7 +13,7 @@ def mcp_result(
     content: Iterable[ContentItem],
     structured: StructuredContent | None = None,
     is_error: bool = False,
-    meta: MetaMapping | None = None,
+    meta: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a CallToolResult-compatible payload.
 
@@ -29,7 +28,8 @@ def mcp_result(
         Whether the tool execution failed. When ``True`` callers should include a
         descriptive human message as the first content item.
     meta:
-        Optional metadata bag replicated into ``_meta`` when provided.
+        Optional metadata exposed via ``_meta`` for clients that rely on request
+        identifiers or timing information.
     """
 
     content_list = list(content)
@@ -43,7 +43,6 @@ def mcp_result(
 
     if structured is not None:
         result["structuredContent"] = dict(structured)
-
     if meta:
         result["_meta"] = dict(meta)
 
