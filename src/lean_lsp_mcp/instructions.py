@@ -1,5 +1,5 @@
 INSTRUCTIONS = """## General Rules
-- Tool inputs use 1-indexed lines/columns; structured tool outputs follow 0-based LSP positions.
+- Tool inputs and structured positions use 1-indexed lines/columns; LSP diagnostics remain 0-based.
 - Always analyze/search context before each file edit.
 - This MCP does NOT make permanent file changes. Use other tools for editing.
 - Work iteratively: Small steps, intermediate sorries, frequent checks.

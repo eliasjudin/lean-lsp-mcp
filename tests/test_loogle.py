@@ -59,14 +59,12 @@ def test_loogle_handles_missing_doc(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.loogle(ctx=ctx, query="Real.sin", num_results=3, format="verbose")
+    response = server_module.loogle(ctx=ctx, query="Real.sin", num_results=3)
 
     assert response["isError"] is False
-    assert response["content"]
-    results = response["structuredContent"]["results"]
-    assert len(results) == 1
-    assert results[0]["name"] == "Real.sin"
-    assert "doc" not in results[0]
+    structured = response["structuredContent"]
+    assert structured["query"] == "Real.sin"
+    assert structured["names"] == ["Real.sin"]
 
 
 def test_loogle_truncates_results_and_strips_doc(monkeypatch, server_module):
@@ -89,13 +87,12 @@ def test_loogle_truncates_results_and_strips_doc(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.loogle(ctx=ctx, query="demo", num_results=1, format="verbose")
+    response = server_module.loogle(ctx=ctx, query="demo", num_results=1)
 
     assert response["isError"] is False
-    results = response["structuredContent"]["results"]
-    assert len(results) == 1
-    assert results[0]["name"] == "foo"
-    assert "doc" not in results[0]
+    structured = response["structuredContent"]
+    assert structured["query"] == "demo"
+    assert structured["names"] == ["foo"]
 
 
 def test_loogle_defaults_to_compact(monkeypatch, server_module):
@@ -163,13 +160,12 @@ def test_leansearch_handles_missing_docstring(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.leansearch(ctx=ctx, query="Foo", num_results=5, format="verbose")
+    response = server_module.leansearch(ctx=ctx, query="Foo", num_results=5)
 
     assert response["isError"] is False
-    results = response["structuredContent"]["results"]
-    assert len(results) == 1
-    assert results[0]["name"] == "Foo.bar"
-    assert "docstring" not in results[0]
+    structured = response["structuredContent"]
+    assert structured["query"] == "Foo"
+    assert structured["names"] == ["Foo.bar"]
 
 
 def test_leansearch_defaults_to_compact(monkeypatch, server_module):

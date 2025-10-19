@@ -198,20 +198,19 @@ class LeanFileSession:
 
 
 def _normalize_format(value: Optional[str], *, default: str = "compact") -> str:
-    """Return a normalized lower-case format string with a fallback default."""
+    """Formats are now fixed to compact; keep helper for backward compatibility."""
 
-    base = value or default
-    return base.strip().lower() if hasattr(base, "strip") else str(base).lower()
+    return "compact"
 
 
 def _compact_pos(*, line: int | None = None, column: int | None = None) -> Dict[str, int]:
-    """Convert 1-based inputs into 0-based compact position payloads."""
+    """Return compact position payloads using 1-based indices."""
 
     pos: Dict[str, int] = {}
     if line is not None:
-        pos["l"] = max(line - 1, 0)
+        pos["l"] = max(line, 1)
     if column is not None:
-        pos["c"] = max(column - 1, 0)
+        pos["c"] = max(column, 1)
     return pos
 
 
@@ -499,7 +498,7 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
 
 # Project level tools
 @mcp.tool("lean_build")
-def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, format: Optional[str] = "compact") -> Any:
+def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, _format: Optional[str] = None) -> Any:
     """Build the Lean project and restart the LSP Server.
 
     Use only if needed (e.g. new imports).
@@ -571,37 +570,22 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
             _record_output(output.get_output())
             build_output = "".join(build_output_parts)
             summary = f"Build ok (clean={str(clean).lower()})"
-            fmt = (format or "compact").lower()
-            if fmt == "compact":
-                structured = {
-                    "project": {"path": sanitized_project},
-                    "clean": clean,
-                    "status": "ok",
-                    "lsp_restarted": True,
-                }
-                content_items = [_text_item(summary)]
-                if build_output and len(build_output) <= 4000:
-                    content_items.append(_resource_item(project_uri, build_output))
-                return success_result(
-                    summary=summary,
-                    structured=structured,
-                    start_time=started,
-                    ctx=ctx,
-                    content=content_items,
-                )
-            else:
-                structured = {
-                    "project_path": sanitized_project,
-                    "clean": clean,
-                    "output": build_output,
-                    "lsp_restarted": True,
-                }
-                return success_result(
-                    summary=summary,
-                    structured=structured,
-                    start_time=started,
-                    ctx=ctx,
-                )
+            structured = {
+                "project": {"path": sanitized_project},
+                "clean": clean,
+                "status": "ok",
+                "lsp_restarted": True,
+            }
+            content_items = [_text_item(summary)]
+            if build_output and len(build_output) <= 4000:
+                content_items.append(_resource_item(project_uri, build_output))
+            return success_result(
+                summary=summary,
+                structured=structured,
+                start_time=started,
+                ctx=ctx,
+                content=content_items,
+            )
 
         # Fallback path: leanclient not installed; run `lake build` directly.
         build_proc = subprocess.run(
@@ -632,36 +616,21 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
 
         lifespan.client = None
         summary = f"Build ok (clean={str(clean).lower()}, leanclient missing)"
-        fmt = (format or "compact").lower()
-        if fmt == "compact":
-            structured = {
-                "project": {"path": sanitized_project},
-                "clean": clean,
-                "status": "ok",
-                "lsp_restarted": False,
-            }
-            content_items = [_text_item(summary)]
-            if build_output and len(build_output) <= 4000:
-                content_items.append(_resource_item(project_uri, build_output))
-            return success_result(
-                summary=summary,
-                structured=structured,
-                start_time=started,
-                ctx=ctx,
-                content=content_items,
-            )
-
         structured = {
-            "project_path": sanitized_project,
+            "project": {"path": sanitized_project},
             "clean": clean,
-            "output": build_output,
+            "status": "ok",
             "lsp_restarted": False,
         }
+        content_items = [_text_item(summary)]
+        if build_output and len(build_output) <= 4000:
+            content_items.append(_resource_item(project_uri, build_output))
         return success_result(
             summary=summary,
             structured=structured,
             start_time=started,
             ctx=ctx,
+            content=content_items,
         )
     except Exception as exc:
         if build_output_parts:
@@ -689,7 +658,7 @@ def file_contents(
     annotate_lines: bool = True,
     start_line: Optional[int] = None,
     line_count: Optional[int] = None,
-    format: Optional[str] = "compact",
+    _format: Optional[str] = None,
 ) -> Any:
     """Get the text contents of a Lean file, optionally with line numbers.
 
@@ -858,16 +827,9 @@ def file_contents(
 
     slice_lines = lines[start - 1 : end] if total_lines else []
     slice_text = "\n".join(slice_lines)
-    fmt = (format or "compact").lower()
     structured: Dict[str, Any] = {
-        "file": {"uri": identity["uri"], "path": identity["relative_path"]}
-        if fmt == "compact"
-        else identity,
-        "slice": (
-            {"start": start, "end": end if total_lines else 0, "total": total_lines}
-            if fmt == "compact"
-            else {"start_line": start, "end_line": end if total_lines else 0, "total_lines": total_lines}
-        ),
+        "file": {"uri": identity["uri"], "path": identity["relative_path"]},
+        "slice": {"start": start, "end": end if total_lines else 0, "total": total_lines},
         "annotated": annotate_lines,
     }
 
@@ -904,12 +866,15 @@ def file_contents(
     else:
         summary = "Empty"
 
+    content_list = [_text_item(summary)]
+    content_list.extend(content_items)
+
     return success_result(
         summary=summary,
         structured=structured,
         start_time=started,
         ctx=ctx,
-        content=[_text_item(summary)] + content_items if content_items else None,
+        content=content_list,
     )
 
 
@@ -919,7 +884,7 @@ def diagnostic_messages(
     file_path: str,
     start_line: Optional[int] = None,
     line_count: Optional[int] = None,
-    format: Optional[str] = "compact",
+    _format: Optional[str] = None,
 ) -> Any:
     """Get all diagnostic msgs (errors, warnings, infos) for a Lean file.
 
@@ -1008,87 +973,75 @@ def diagnostic_messages(
             error_count = summary["bySeverity"].get("error", 0)
             summary_text = f"{summary['count']} diagnostics ({error_count} errors)."
 
-            # Choose structuredContent shape based on requested format
-            fmt = _normalize_format(format)
-            structured: Dict[str, Any]
-            if fmt == "compact":
-                # Compact, token-minimizing shape: dedupe messages and compress ranges.
-                def _sev_code(entry: Dict[str, Any]) -> Optional[int]:
-                    code = entry.get("severityCode")
-                    if isinstance(code, int):
-                        return code
-                    # fallback best-effort from label
-                    label = entry.get("severity")
-                    return {"error": 1, "warning": 2, "info": 3, "hint": 4}.get(label)  # type: ignore[arg-type]
+            # Compact, token-minimizing shape: dedupe messages and compress ranges.
+            def _sev_code(entry: Dict[str, Any]) -> Optional[int]:
+                code = entry.get("severityCode")
+                if isinstance(code, int):
+                    return code
+                # fallback best-effort from label
+                label = entry.get("severity")
+                return {"error": 1, "warning": 2, "info": 3, "hint": 4}.get(label)  # type: ignore[arg-type]
 
-                # Unique messages in order of first appearance
-                msg_index: Dict[str, int] = {}
-                messages: List[str] = []
-                diags_compact: List[Dict[str, Any]] = []
+            # Unique messages in order of first appearance
+            msg_index: Dict[str, int] = {}
+            messages: List[str] = []
+            diags_compact: List[Dict[str, Any]] = []
 
-                for e in entries:
-                    msg = e.get("message", "")
-                    if msg not in msg_index:
-                        msg_index[msg] = len(messages)
-                        messages.append(msg)
-                    idx = msg_index[msg]
+            for e in entries:
+                msg = e.get("message", "")
+                if msg not in msg_index:
+                    msg_index[msg] = len(messages)
+                    messages.append(msg)
+                idx = msg_index[msg]
 
-                    rng = e.get("range")
-                    s_arr = e_arr = None
-                    if rng and isinstance(rng, dict):
-                        try:
-                            s_arr = [
-                                int(rng["start"]["line"]),
-                                int(rng["start"]["character"]),
-                            ]
-                            e_arr = [
-                                int(rng["end"]["line"]),
-                                int(rng["end"]["character"]),
-                            ]
-                        except Exception:
-                            s_arr = e_arr = None
+                rng = e.get("range")
+                s_arr = e_arr = None
+                if rng and isinstance(rng, dict):
+                    try:
+                        s_arr = [
+                            int(rng["start"]["line"]),
+                            int(rng["start"]["character"]),
+                        ]
+                        e_arr = [
+                            int(rng["end"]["line"]),
+                            int(rng["end"]["character"]),
+                        ]
+                    except Exception:
+                        s_arr = e_arr = None
 
-                    item: Dict[str, Any] = {"m": idx}
-                    sev = _sev_code(e)
-                    if sev is not None:
-                        item["sev"] = sev
-                    if s_arr is not None:
-                        item["s"] = s_arr
-                    if e_arr is not None:
-                        item["e"] = e_arr
-                    # include code if available (useful, compact)
-                    if "code" in e and e["code"] is not None:
-                        item["code"] = e["code"]
-                    diags_compact.append(item)
+                item: Dict[str, Any] = {"m": idx}
+                sev = _sev_code(e)
+                if sev is not None:
+                    item["sev"] = sev
+                if s_arr is not None:
+                    item["s"] = s_arr
+                if e_arr is not None:
+                    item["e"] = e_arr
+                # include code if available (useful, compact)
+                if "code" in e and e["code"] is not None:
+                    item["code"] = e["code"]
+                diags_compact.append(item)
 
-                # Build numeric bySev map
-                by_sev_codes: Dict[str, int] = {}
-                for sev_label, count in summary.get("bySeverity", {}).items():
-                    code = {"error": 1, "warning": 2, "info": 3, "hint": 4}.get(
-                        sev_label
-                    )
-                    if code is not None:
-                        by_sev_codes[str(code)] = count
+            # Build numeric bySev map
+            by_sev_codes: Dict[str, int] = {}
+            for sev_label, count in summary.get("bySeverity", {}).items():
+                code = {"error": 1, "warning": 2, "info": 3, "hint": 4}.get(
+                    sev_label
+                )
+                if code is not None:
+                    by_sev_codes[str(code)] = count
 
-                structured = {
-                    "file": {
-                        "uri": identity["uri"],
-                        "path": identity["relative_path"],
-                    },
-                    "summary": {"count": summary["count"], "bySev": by_sev_codes},
-                    "messages": messages,
-                    "diags": diags_compact,
-                }
-                if include_pagination:
-                    structured["pagination"] = pagination_meta
-            else:
-                structured = {
-                    "file": identity,
-                    "diagnostics": entries,
-                    "summary": summary,
-                }
-                if include_pagination:
-                    structured["pagination"] = pagination_meta
+            structured: Dict[str, Any] = {
+                "file": {
+                    "uri": identity["uri"],
+                    "path": identity["relative_path"],
+                },
+                "summary": {"count": summary["count"], "bySev": by_sev_codes},
+                "messages": messages,
+                "diags": diags_compact,
+            }
+            if include_pagination:
+                structured["pagination"] = pagination_meta
 
             return success_result(
                 summary=summary_text,
@@ -1106,7 +1059,7 @@ def goal(
     file_path: str,
     line: int,
     column: Optional[int] = None,
-    format: Optional[str] = "compact",
+    _format: Optional[str] = None,
 ) -> Any:
     """Get the proof goals (proof state) at a specific location in a Lean file.
 
@@ -1157,31 +1110,22 @@ def goal(
                 goal_start = client.get_goal(rel_path, line - 1, column_start)
                 goal_end = client.get_goal(rel_path, line - 1, column_end)
 
-                fmt = _normalize_format(format)
                 if goal_start is None and goal_end is None:
-                    if fmt == "compact":
-                        summary_text = f"No goals at line {line}."
-                        structured = {
-                            "file": {
-                                "uri": identity["uri"],
-                                "path": identity["relative_path"],
-                            },
-                            "pos": _compact_pos(line=line),
-                            "status": "no_goals",
-                            "code": "no_goals",
-                            "message": "No goals on that line.",
-                        }
-                        return success_result(
-                            summary=summary_text,
-                            structured=structured,
-                            content=[_text_item(summary_text)],
-                            start_time=started,
-                            ctx=ctx,
-                        )
-                    return error_result(
-                        message="No goals on that line.",
-                        code=ERROR_NO_GOAL,
-                        details={"file": identity["relative_path"], "line": line},
+                    summary_text = f"No goals at line {line}."
+                    structured = {
+                        "file": {
+                            "uri": identity["uri"],
+                            "path": identity["relative_path"],
+                        },
+                        "pos": _compact_pos(line=line),
+                        "status": "no_goals",
+                        "code": "no_goals",
+                        "message": "No goals on that line.",
+                    }
+                    return success_result(
+                        summary=summary_text,
+                        structured=structured,
+                        content=[_text_item(summary_text)],
                         start_time=started,
                         ctx=ctx,
                     )
@@ -1217,43 +1161,39 @@ def goal(
                         else ""
                     ),
                 ]
-                if fmt == "compact":
-                    compact_goals: List[Dict[str, Any]] = []
-                    for r in results:
-                        kind = r.get("kind")
-                        pos = r.get("position", {})
-                        gl = r.get("goal") or {}
-                        rendered = (
-                            gl.get("rendered") if isinstance(gl, dict) else None
-                        )
-                        item: Dict[str, Any] = {
-                            "k": ("start" if kind == "line_start" else "end"),
-                            "p": [
-                                pos.get("line", 0),
-                                pos.get("character", 0),
-                            ],
-                            "r": (
-                                rendered.splitlines()[0]
-                                if isinstance(rendered, str) and rendered
-                                else ""
-                            ),
-                        }
-                        compact_goals.append(item)
-                    structured = {
-                        "file": {
-                            "uri": identity["uri"],
-                            "path": identity["relative_path"],
-                        },
-                        "pos": _compact_pos(line=line),
-                        "goals": compact_goals,
+                compact_goals: List[Dict[str, Any]] = []
+                for r in results:
+                    kind = r.get("kind")
+                    pos = r.get("position", {})
+                    gl = r.get("goal") or {}
+                    rendered = (
+                        gl.get("rendered") if isinstance(gl, dict) else None
+                    )
+                    raw_line = pos.get("line")
+                    raw_column = pos.get("character")
+                    line_index = max((raw_line + 1) if raw_line is not None else 1, 1)
+                    column_index = max((raw_column + 1) if raw_column is not None else 1, 1)
+                    item: Dict[str, Any] = {
+                        "k": ("start" if kind == "line_start" else "end"),
+                        "p": [
+                            line_index,
+                            column_index,
+                        ],
+                        "r": (
+                            rendered.splitlines()[0]
+                            if isinstance(rendered, str) and rendered
+                            else ""
+                        ),
                     }
-                else:
-                    structured = {
-                        "file": identity,
-                        "query": {"mode": "line", "line": line - 1},
-                        "results": results,
-                        "context": {"text": line_text},
-                    }
+                    compact_goals.append(item)
+                structured = {
+                    "file": {
+                        "uri": identity["uri"],
+                        "path": identity["relative_path"],
+                    },
+                    "pos": _compact_pos(line=line),
+                    "goals": compact_goals,
+                }
                 return success_result(
                     summary=summary_text,
                     structured=structured,
@@ -1276,40 +1216,25 @@ def goal(
                 goal_value, "Not a valid goal position. Try elsewhere?"
             )
             if goal_value is None:
-                fmt = _normalize_format(format)
-                if fmt == "compact":
-                    summary_text = f"No goals at {line}:{column}."
-                    structured = {
-                        "file": {
-                            "uri": identity["uri"],
-                            "path": identity["relative_path"],
-                        },
-                        "pos": _compact_pos(line=line, column=column),
-                        "status": "no_goals",
-                        "code": "no_goals",
-                        "message": "No goals at that position.",
-                    }
-                    return success_result(
-                        summary=summary_text,
-                        structured=structured,
-                        content=[_text_item(summary_text)],
-                        start_time=started,
-                        ctx=ctx,
-                    )
-                return error_result(
-                    message="No goals at that position.",
-                    code=ERROR_NO_GOAL,
-                    details={
-                        "file": identity["relative_path"],
-                        "line": line,
-                        "column": column,
+                summary_text = f"No goals at {line}:{column}."
+                structured = {
+                    "file": {
+                        "uri": identity["uri"],
+                        "path": identity["relative_path"],
                     },
+                    "pos": _compact_pos(line=line, column=column),
+                    "status": "no_goals",
+                    "code": "no_goals",
+                    "message": "No goals at that position.",
+                }
+                return success_result(
+                    summary=summary_text,
+                    structured=structured,
+                    content=[_text_item(summary_text)],
                     start_time=started,
                     ctx=ctx,
                 )
 
-            context_line = format_line(content, line, column)
-            fmt = _normalize_format(format)
             summary_text = f"Goal at {line}:{column}."
             content_items = [
                 _text_item(summary_text),
@@ -1317,30 +1242,16 @@ def goal(
                     formatted_goal.splitlines()[0] if formatted_goal else ""
                 ),
             ]
-            if fmt == "compact":
-                payload = goal_to_payload(goal_value)
-                rendered = (
-                    payload.get("rendered") if isinstance(payload, dict) else None
-                )
-                structured = {
-                    "file": {
-                        "uri": identity["uri"],
-                        "path": identity["relative_path"],
-                    },
-                    "pos": _compact_pos(line=line, column=column),
-                    "rendered": rendered,
-                }
-            else:
-                structured = {
-                    "file": identity,
-                    "query": {
-                        "mode": "point",
-                        "line": line - 1,
-                        "character": column - 1,
-                    },
-                    "goal": goal_to_payload(goal_value),
-                    "context": {"rendered": context_line},
-                }
+            payload = goal_to_payload(goal_value)
+            rendered = payload.get("rendered") if isinstance(payload, dict) else None
+            structured = {
+                "file": {
+                    "uri": identity["uri"],
+                    "path": identity["relative_path"],
+                },
+                "pos": _compact_pos(line=line, column=column),
+                "rendered": rendered,
+            }
             return success_result(
                 summary=summary_text,
                 structured=structured,
@@ -1354,7 +1265,7 @@ def goal(
 
 @mcp.tool("lean_term_goal")
 def term_goal(
-    ctx: Context, file_path: str, line: int, column: Optional[int] = None, format: Optional[str] = "compact"
+    ctx: Context, file_path: str, line: int, column: Optional[int] = None, _format: Optional[str] = None
 ) -> Any:
     """Get the expected type (term goal) at a specific location in a Lean file.
 
@@ -1417,7 +1328,6 @@ def term_goal(
             term_goal_value = file_session.client.get_term_goal(
                 file_session.rel_path, line - 1, target_column - 1
             )
-            context_line = format_line(content, line, target_column)
             if term_goal_value is None:
                 return error_result(
                     message="Not a valid term goal position.",
@@ -1435,33 +1345,20 @@ def term_goal(
             if rendered is not None:
                 rendered = rendered.replace("```lean\n", "").replace("\n```", "")
 
-            fmt = _normalize_format(format)
             summary_text = f"Term goal at {line}:{target_column}."
             snippet = rendered.splitlines()[0] if rendered else ""
             content_items = [_text_item(summary_text)]
             if snippet:
                 content_items.append(_text_item(snippet))
 
-            if fmt == "compact":
-                structured = {
-                    "file": {
-                        "uri": identity["uri"],
-                        "path": identity["relative_path"],
-                    },
-                    "pos": _compact_pos(line=line, column=target_column),
-                    "rendered": rendered,
-                }
-            else:
-                structured = {
-                    "file": identity,
-                    "query": {
-                        "line": line - 1,
-                        "character": target_column - 1,
-                    },
-                    "rendered": rendered,
-                    "raw": term_goal_value,
-                    "context": {"rendered": context_line},
-                }
+            structured = {
+                "file": {
+                    "uri": identity["uri"],
+                    "path": identity["relative_path"],
+                },
+                "pos": _compact_pos(line=line, column=target_column),
+                "rendered": rendered,
+            }
             return success_result(
                 summary=summary_text,
                 structured=structured,
@@ -1474,7 +1371,7 @@ def term_goal(
 
 
 @mcp.tool("lean_hover_info")
-def hover(ctx: Context, file_path: str, line: int, column: int, format: Optional[str] = "compact") -> Any:
+def hover(ctx: Context, file_path: str, line: int, column: int, _format: Optional[str] = None) -> Any:
     """Get hover info (docs for syntax, variables, functions, etc.) at a specific location in a Lean file.
 
     Args:
@@ -1526,95 +1423,76 @@ def hover(ctx: Context, file_path: str, line: int, column: int, format: Optional
             )
             diagnostic_entries = diagnostics_to_entries(filtered)
 
-            fmt = _normalize_format(format)
             summary_text = f"Hover for `{symbol}` at {line}:{column}."
-            if fmt == "compact":
-                # Compact range and diagnostics
-                rng = normalize_range(h_range)
-                s_arr = e_arr = None
-                if rng:
+            # Compact range and diagnostics
+            rng = normalize_range(h_range)
+            s_arr = e_arr = None
+            if rng:
+                try:
+                    s_arr = [
+                        int(rng["start"]["line"]),
+                        int(rng["start"]["character"]),
+                    ]
+                    e_arr = [
+                        int(rng["end"]["line"]),
+                        int(rng["end"]["character"]),
+                    ]
+                except Exception:
+                    s_arr = e_arr = None
+
+            # diagnostics compact
+            msg_index: Dict[str, int] = {}
+            messages: List[str] = []
+            diags_compact: List[Dict[str, Any]] = []
+            for entry in diagnostic_entries:
+                msg = entry.get("message", "")
+                if msg not in msg_index:
+                    msg_index[msg] = len(messages)
+                    messages.append(msg)
+                idx = msg_index[msg]
+                sev = entry.get("severityCode")
+                rng2 = entry.get("range")
+                s2 = e2 = None
+                if rng2:
                     try:
-                        s_arr = [
-                            int(rng["start"]["line"]),
-                            int(rng["start"]["character"]),
+                        s2 = [
+                            int(rng2["start"]["line"]),
+                            int(rng2["start"]["character"]),
                         ]
-                        e_arr = [
-                            int(rng["end"]["line"]),
-                            int(rng["end"]["character"]),
+                        e2 = [
+                            int(rng2["end"]["line"]),
+                            int(rng2["end"]["character"]),
                         ]
                     except Exception:
-                        s_arr = e_arr = None
+                        s2 = e2 = None
+                item: Dict[str, Any] = {"m": idx}
+                if isinstance(sev, int):
+                    item["sev"] = sev
+                if s2 is not None:
+                    item["s"] = s2
+                if e2 is not None:
+                    item["e"] = e2
+                diags_compact.append(item)
 
-                # diagnostics compact
-                msg_index: Dict[str, int] = {}
-                messages: List[str] = []
-                diags_compact: List[Dict[str, Any]] = []
-                for entry in diagnostic_entries:
-                    msg = entry.get("message", "")
-                    if msg not in msg_index:
-                        msg_index[msg] = len(messages)
-                        messages.append(msg)
-                    idx = msg_index[msg]
-                    sev = entry.get("severityCode")
-                    rng2 = entry.get("range")
-                    s2 = e2 = None
-                    if rng2:
-                        try:
-                            s2 = [
-                                int(rng2["start"]["line"]),
-                                int(rng2["start"]["character"]),
-                            ]
-                            e2 = [
-                                int(rng2["end"]["line"]),
-                                int(rng2["end"]["character"]),
-                            ]
-                        except Exception:
-                            s2 = e2 = None
-                    item: Dict[str, Any] = {"m": idx}
-                    if isinstance(sev, int):
-                        item["sev"] = sev
-                    if s2 is not None:
-                        item["s"] = s2
-                    if e2 is not None:
-                        item["e"] = e2
-                    diags_compact.append(item)
-
-                structured = {
-                    "file": {
-                        "uri": identity["uri"],
-                        "path": identity["relative_path"],
-                    },
-                    "pos": _compact_pos(line=line, column=column),
-                    "symbol": symbol,
-                    "range": (
-                        {"s": s_arr, "e": e_arr}
-                        if s_arr is not None and e_arr is not None
-                        else None
-                    ),
-                    "infoSnippet": info.splitlines()[0] if info else "",
-                    "messages": messages,
-                    "diags": diags_compact,
-                }
-                content_items = [_text_item(summary_text)]
-                if info:
-                    content_items.append(_text_item(info.splitlines()[0]))
-            else:
-                structured = {
-                    "file": identity,
-                    "position": {"line": line - 1, "character": column - 1},
-                    "symbol": symbol,
-                    "range": normalize_range(h_range),
-                    "info": info,
-                    "diagnostics": diagnostic_entries,
-                }
-                content_items = [_text_item(summary_text)]
-                if info:
-                    content_items.append(_text_item(info.splitlines()[0]))
-                for snippet in [entry["message"] for entry in diagnostic_entries][:2]:
-                    if snippet:
-                        content_items.append(
-                            _text_item(f"Related diagnostic: {snippet}")
-                        )
+            structured = {
+                "file": {
+                    "uri": identity["uri"],
+                    "path": identity["relative_path"],
+                },
+                "pos": _compact_pos(line=line, column=column),
+                "symbol": symbol,
+                "range": (
+                    {"s": s_arr, "e": e_arr}
+                    if s_arr is not None and e_arr is not None
+                    else None
+                ),
+                "infoSnippet": info.splitlines()[0] if info else "",
+                "messages": messages,
+                "diags": diags_compact,
+            }
+            content_items = [_text_item(summary_text)]
+            if info:
+                content_items.append(_text_item(info.splitlines()[0]))
 
             return success_result(
                 summary=summary_text,
@@ -1629,7 +1507,7 @@ def hover(ctx: Context, file_path: str, line: int, column: int, format: Optional
 
 @mcp.tool("lean_completions")
 def completions(
-    ctx: Context, file_path: str, line: int, column: int, max_completions: int = 32, format: Optional[str] = "compact"
+    ctx: Context, file_path: str, line: int, column: int, max_completions: int = 32, _format: Optional[str] = None
 ) -> Any:
     """Get code completions at a location in a Lean file.
 
@@ -1663,7 +1541,6 @@ def completions(
                 file_session.rel_path, line - 1, column - 1
             )
             labels = [item.get("label") for item in completion_items if item.get("label")]
-            context_line = format_line(content, line, column)
 
             if not labels:
                 return error_result(
@@ -1714,29 +1591,19 @@ def completions(
                         entry[field] = item[field]
                 suggestions.append(entry)
 
-            fmt = _normalize_format(format)
-            if fmt == "compact":
-                structured = {
-                    "file": {
-                        "uri": identity["uri"],
-                        "path": identity["relative_path"],
-                    },
-                    "pos": _compact_pos(line=line, column=column),
-                    "prefix": prefix,
-                    "labels": [
-                        suggestion.get("label")
-                        for suggestion in suggestions
-                        if suggestion.get("label")
-                    ],
-                }
-            else:
-                structured = {
-                    "file": identity,
-                    "position": {"line": line - 1, "character": column - 1},
-                    "prefix": prefix,
-                    "suggestions": suggestions,
-                    "context": {"rendered": context_line},
-                }
+            structured = {
+                "file": {
+                    "uri": identity["uri"],
+                    "path": identity["relative_path"],
+                },
+                "pos": _compact_pos(line=line, column=column),
+                "prefix": prefix,
+                "labels": [
+                    suggestion.get("label")
+                    for suggestion in suggestions
+                    if suggestion.get("label")
+                ],
+            }
 
             summary_text = f"{len(suggestions)} completions at {line}:{column}."
             content_items = [_text_item(summary_text)]
@@ -1755,7 +1622,7 @@ def completions(
 
 
 @mcp.tool("lean_declaration_file")
-def declaration_file(ctx: Context, file_path: str, symbol: str, format: Optional[str] = "compact") -> Any:
+def declaration_file(ctx: Context, file_path: str, symbol: str, _format: Optional[str] = None) -> Any:
     """Get the file contents where a symbol/lemma/class/structure is declared."""
 
     started = time.perf_counter()
@@ -1824,42 +1691,25 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, format: Optional
             declaration_identity = file_identity(
                 _sanitize_path_label(abs_path), absolute_path=abs_path
             )
-            fmt = _normalize_format(format)
-            if fmt == "compact":
-                structured = {
-                    "symbol": symbol,
-                    "origin": {
-                        "file": {
-                            "uri": identity["uri"],
-                            "path": identity["relative_path"],
-                        },
-                        "pos": _compact_pos(
-                            line=position["line"] + 1,
-                            column=position["column"] + 1,
-                        ),
+            structured = {
+                "symbol": symbol,
+                "origin": {
+                    "file": {
+                        "uri": identity["uri"],
+                        "path": identity["relative_path"],
                     },
-                    "declaration": {
-                        "file": {
-                            "uri": declaration_identity["uri"],
-                            "path": declaration_identity["relative_path"],
-                        }
-                    },
-                }
-            else:
-                structured = {
-                    "symbol": symbol,
-                    "origin": {
-                        "file": identity,
-                        "position": {
-                            "line": position["line"],
-                            "character": position["column"],
-                        },
-                    },
-                    "declaration": {
-                        "file": declaration_identity,
-                        "contents": file_content,
-                    },
-                }
+                    "pos": _compact_pos(
+                        line=position["line"] + 1,
+                        column=position["column"] + 1,
+                    ),
+                },
+                "declaration": {
+                    "file": {
+                        "uri": declaration_identity["uri"],
+                        "path": declaration_identity["relative_path"],
+                    }
+                },
+            }
 
             summary = f"Declaration for `{symbol}`."
             content_items = [_text_item(summary)]
@@ -1881,7 +1731,7 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, format: Optional
 
 @mcp.tool("lean_multi_attempt")
 def multi_attempt(
-    ctx: Context, file_path: str, line: int, snippets: List[str], format: Optional[str] = "compact"
+    ctx: Context, file_path: str, line: int, snippets: List[str], _format: Optional[str] = None
 ) -> Any:
     """Try multiple Lean code snippets at a line and get the goal state and diagnostics for each.
 
@@ -1963,44 +1813,36 @@ def multi_attempt(
                         f"`{snippet_label}`: {diag_summary['count']} diagnostics"
                     )
 
-                fmt = _normalize_format(format)
-                if fmt == "compact":
-                    compact_attempts: List[Dict[str, Any]] = []
-                    for att in attempts:
-                        goal_payload = att.get("goal") or {}
-                        rendered_goal = (
-                            goal_payload.get("rendered")
-                            if isinstance(goal_payload, dict)
-                            else None
-                        )
-                        diag_count = (
-                            summarize_diagnostics(att.get("diagnostics", [])).get("count", 0)
-                        )
-                        compact_attempts.append(
-                            {
-                                "s": att.get("snippet", ""),
-                                "dc": diag_count,
-                                "gs": (
-                                    rendered_goal.splitlines()[0]
-                                    if isinstance(rendered_goal, str) and rendered_goal
-                                    else ""
-                                ),
-                            }
-                        )
-                    structured = {
-                        "file": {
-                            "uri": identity["uri"],
-                            "path": identity["relative_path"],
-                        },
-                        "pos": _compact_pos(line=line),
-                        "attempts": compact_attempts,
-                    }
-                else:
-                    structured = {
-                        "file": identity,
-                        "position": {"line": line - 1, "character": 0},
-                        "attempts": attempts,
-                    }
+                compact_attempts: List[Dict[str, Any]] = []
+                for att in attempts:
+                    goal_payload = att.get("goal") or {}
+                    rendered_goal = (
+                        goal_payload.get("rendered")
+                        if isinstance(goal_payload, dict)
+                        else None
+                    )
+                    diag_count = (
+                        summarize_diagnostics(att.get("diagnostics", [])).get("count", 0)
+                    )
+                    compact_attempts.append(
+                        {
+                            "s": att.get("snippet", ""),
+                            "dc": diag_count,
+                            "gs": (
+                                rendered_goal.splitlines()[0]
+                                if isinstance(rendered_goal, str) and rendered_goal
+                                else ""
+                            ),
+                        }
+                    )
+                structured = {
+                    "file": {
+                        "uri": identity["uri"],
+                        "path": identity["relative_path"],
+                    },
+                    "pos": _compact_pos(line=line),
+                    "attempts": compact_attempts,
+                }
 
                 summary = f"Tried {len(attempts)} snippet(s) at line {line}."
                 content_items: List[Dict[str, Any]] = [_text_item(summary)]
@@ -2035,7 +1877,7 @@ def multi_attempt(
 
 
 @mcp.tool("lean_run_code")
-def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
+def run_code(ctx: Context, code: str, _format: Optional[str] = None) -> Any:
     """Run a complete, self-contained code snippet and return diagnostics.
 
     Has to include all imports and definitions!
@@ -2164,56 +2006,48 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
     identity = _identity_for_rel_path(ctx, rel_path)
     diagnostics_entries = diagnostics_payload or []
     diag_summary = summarize_diagnostics(diagnostics_entries)
-    fmt = (format or "compact").lower()
-    if fmt == "compact":
-        # compact diagnostics shape
-        msg_index: Dict[str, int] = {}
-        messages: List[str] = []
-        diags_compact: List[Dict[str, Any]] = []
-        for e in diagnostics_entries:
-            msg = e.get("message", "")
-            if msg not in msg_index:
-                msg_index[msg] = len(messages)
-                messages.append(msg)
-            idx = msg_index[msg]
-            rng = e.get("range")
-            s_arr = e_arr = None
-            if rng and isinstance(rng, dict):
-                try:
-                    s_arr = [int(rng["start"]["line"]), int(rng["start"]["character"])]
-                    e_arr = [int(rng["end"]["line"]), int(rng["end"]["character"])]
-                except Exception:
-                    s_arr = e_arr = None
-            item: Dict[str, Any] = {"m": idx}
-            sev = e.get("severityCode")
-            if isinstance(sev, int):
-                item["sev"] = sev
-            if s_arr is not None:
-                item["s"] = s_arr
-            if e_arr is not None:
-                item["e"] = e_arr
-            if "code" in e and e["code"] is not None:
-                item["code"] = e["code"]
-            diags_compact.append(item)
+    # compact diagnostics shape
+    msg_index: Dict[str, int] = {}
+    messages: List[str] = []
+    diags_compact: List[Dict[str, Any]] = []
+    for e in diagnostics_entries:
+        msg = e.get("message", "")
+        if msg not in msg_index:
+            msg_index[msg] = len(messages)
+            messages.append(msg)
+        idx = msg_index[msg]
+        rng = e.get("range")
+        s_arr = e_arr = None
+        if rng and isinstance(rng, dict):
+            try:
+                s_arr = [int(rng["start"]["line"]), int(rng["start"]["character"])]
+                e_arr = [int(rng["end"]["line"]), int(rng["end"]["character"])]
+            except Exception:
+                s_arr = e_arr = None
+        item: Dict[str, Any] = {"m": idx}
+        sev = e.get("severityCode")
+        if isinstance(sev, int):
+            item["sev"] = sev
+        if s_arr is not None:
+            item["s"] = s_arr
+        if e_arr is not None:
+            item["e"] = e_arr
+        if "code" in e and e["code"] is not None:
+            item["code"] = e["code"]
+        diags_compact.append(item)
 
-        by_sev_codes: Dict[str, int] = {}
-        for sev_label, count in diag_summary.get("bySeverity", {}).items():
-            code = {"error": 1, "warning": 2, "info": 3, "hint": 4}.get(sev_label)
-            if code is not None:
-                by_sev_codes[str(code)] = count
+    by_sev_codes: Dict[str, int] = {}
+    for sev_label, count in diag_summary.get("bySeverity", {}).items():
+        code = {"error": 1, "warning": 2, "info": 3, "hint": 4}.get(sev_label)
+        if code is not None:
+            by_sev_codes[str(code)] = count
 
-        structured = {
-            "file": {"uri": identity["uri"], "path": identity["relative_path"]},
-            "summary": {"count": diag_summary["count"], "bySev": by_sev_codes},
-            "messages": messages,
-            "diags": diags_compact,
-        }
-    else:
-        structured = {
-            "file": identity,
-            "diagnostics": diagnostics_entries,
-            "summary": diag_summary,
-        }
+    structured = {
+        "file": {"uri": identity["uri"], "path": identity["relative_path"]},
+        "summary": {"count": diag_summary["count"], "bySev": by_sev_codes},
+        "messages": messages,
+        "diags": diags_compact,
+    }
 
     summary_text = (
         "No diagnostics for snippet." if not diag_summary["count"] else (
@@ -2236,38 +2070,28 @@ def run_code(ctx: Context, code: str, format: Optional[str] = "compact") -> Any:
 
 
 @mcp.tool("lean_tool_spec")
-def tool_spec(ctx: Context, format: Optional[str] = "compact") -> Any:
+def tool_spec(ctx: Context, _format: Optional[str] = None) -> Any:
     started = time.perf_counter()
     spec = build_tool_spec()
     summary = "Lean MCP tool specification ready."
-    fmt = (format or "compact").lower()
-    if fmt == "compact":
-        tool_names = [t.get("name") for t in spec.get("tools", [])]
-        response_kinds = list((spec.get("responses") or {}).keys())
-        compact = {
-            "tools": tool_names,
-            "responses": response_kinds,
-        }
-        return success_result(
-            summary=summary,
-            structured=compact,
-            content=[_text_item(summary)],
-            start_time=started,
-            ctx=ctx,
-        )
-    else:
-        return success_result(
-            summary=summary,
-            structured=spec,
-            content=[_text_item(summary)],
-            start_time=started,
-            ctx=ctx,
-        )
+    tool_names = [t.get("name") for t in spec.get("tools", [])]
+    response_kinds = list((spec.get("responses") or {}).keys())
+    compact = {
+        "tools": tool_names,
+        "responses": response_kinds,
+    }
+    return success_result(
+        summary=summary,
+        structured=compact,
+        content=[_text_item(summary)],
+        start_time=started,
+        ctx=ctx,
+    )
 
 
 @mcp.tool("lean_leansearch")
 @rate_limited("leansearch", max_requests=3, per_seconds=30)
-def leansearch(ctx: Context, query: str, num_results: int = 5, format: Optional[str] = "compact") -> Any:
+def leansearch(ctx: Context, query: str, num_results: int = 5, _format: Optional[str] = None) -> Any:
     """Search for Lean theorems, definitions, and tactics using leansearch.net.
 
     Query patterns:
@@ -2324,13 +2148,8 @@ def leansearch(ctx: Context, query: str, num_results: int = 5, format: Optional[
             if isinstance(name_parts, list):
                 result["name"] = ".".join(name_parts)
 
-        fmt = (format or "compact").lower()
-        if fmt == "compact":
-            names = [str(res.get("name") or res.get("declaration") or "") for res in results]
-            structured = {"query": query, "names": names}
-        else:
-            structured = {"query": query, "results": results}
-            names = [res.get("name") or res.get("declaration") for res in results]
+        names = [str(res.get("name") or res.get("declaration") or "") for res in results]
+        structured = {"query": query, "names": names}
         preview = ", ".join(filter(None, names[:3]))
         summary = f"{len(results)} results"
         return success_result(
@@ -2352,7 +2171,7 @@ def leansearch(ctx: Context, query: str, num_results: int = 5, format: Optional[
 
 @mcp.tool("lean_loogle")
 @rate_limited("loogle", max_requests=3, per_seconds=30)
-def loogle(ctx: Context, query: str, num_results: int = 8, format: Optional[str] = "compact") -> Any:
+def loogle(ctx: Context, query: str, num_results: int = 8, _format: Optional[str] = None) -> Any:
     """Search for definitions and theorems using loogle.
 
     Query patterns:
@@ -2404,13 +2223,8 @@ def loogle(ctx: Context, query: str, num_results: int = 8, format: Optional[str]
             )
         for result in results:
             result.pop("doc", None)
-        fmt = (format or "compact").lower()
-        if fmt == "compact":
-            names = [hit.get("name") for hit in results if hit.get("name")]
-            structured = {"query": query, "names": names}
-        else:
-            structured = {"query": query, "results": results}
-            names = [hit.get("name") for hit in results if hit.get("name")]
+        names = [hit.get("name") for hit in results if hit.get("name")]
+        structured = {"query": query, "names": names}
         preview = ", ".join(names[:3])
         summary = f"{len(results)} results"
         return success_result(
@@ -2433,7 +2247,7 @@ def loogle(ctx: Context, query: str, num_results: int = 8, format: Optional[str]
 @mcp.tool("lean_state_search")
 @rate_limited("lean_state_search", max_requests=3, per_seconds=30)
 def state_search(
-    ctx: Context, file_path: str, line: int, column: int, num_results: int = 5, format: Optional[str] = "compact"
+    ctx: Context, file_path: str, line: int, column: int, num_results: int = 5, _format: Optional[str] = None
 ) -> Any:
     """Search for theorems based on proof state using premise-search.com.
 
@@ -2466,7 +2280,6 @@ def state_search(
     except ToolError as exc:
         return exc.payload
 
-    f_line = format_line(file_contents, line, column)
     if not goal_state or not goal_state.get("goals"):
         return error_result(
             message="No goals found",
@@ -2514,29 +2327,16 @@ def state_search(
                 ctx=ctx,
             )
 
-        fmt = _normalize_format(format)
-        if fmt == "compact":
-            names = [res.get("name") or "" for res in results]
-            structured = {
-                "file": {
-                    "uri": identity["uri"],
-                    "path": identity["relative_path"],
-                },
-                "pos": _compact_pos(line=line, column=column),
-                "query": {"state": data["state"], "limit": num_results},
-                "names": names,
-            }
-        else:
-            structured = {
-                "file": identity,
-                "position": {"line": line - 1, "character": column - 1},
-                "query": {
-                    "state": data["state"],
-                    "preview": f_line,
-                    "result_limit": num_results,
-                },
-                "results": results,
-            }
+        names = [res.get("name") or "" for res in results]
+        structured = {
+            "file": {
+                "uri": identity["uri"],
+                "path": identity["relative_path"],
+            },
+            "pos": _compact_pos(line=line, column=column),
+            "query": {"state": data["state"], "limit": num_results},
+            "names": names,
+        }
         summary = f"{len(results)} results"
         return success_result(
             summary=summary,
@@ -2563,7 +2363,7 @@ def state_search(
 @mcp.tool("lean_hammer_premise")
 @rate_limited("hammer_premise", max_requests=3, per_seconds=30)
 def hammer_premise(
-    ctx: Context, file_path: str, line: int, column: int, num_results: int = 32, format: Optional[str] = "compact"
+    ctx: Context, file_path: str, line: int, column: int, num_results: int = 32, _format: Optional[str] = None
 ) -> Any:
     """Search for premises based on proof state using the lean hammer premise search.
 
@@ -2631,28 +2431,15 @@ def hammer_premise(
             results = json.loads(response.read().decode("utf-8"))
 
         results = [result["name"] for result in results]
-        fmt = _normalize_format(format)
-        if fmt == "compact":
-            structured = {
-                "file": {
-                    "uri": identity["uri"],
-                    "path": identity["relative_path"],
-                },
-                "pos": _compact_pos(line=line, column=column),
-                "query": {"state": data["state"], "limit": num_results},
-                "names": results,
-            }
-        else:
-            structured = {
-                "file": identity,
-                "position": {"line": line - 1, "character": column - 1},
-                "query": {
-                    "state": data["state"],
-                    "preview": f_line,
-                    "result_limit": num_results,
-                },
-                "results": results,
-            }
+        structured = {
+            "file": {
+                "uri": identity["uri"],
+                "path": identity["relative_path"],
+            },
+            "pos": _compact_pos(line=line, column=column),
+            "query": {"state": data["state"], "limit": num_results},
+            "names": results,
+        }
         summary = f"{len(results)} results"
         return success_result(
             summary=summary,
