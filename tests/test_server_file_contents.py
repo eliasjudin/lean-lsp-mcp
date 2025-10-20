@@ -22,19 +22,21 @@ def _make_ctx(project_root: str | None = None) -> SimpleNamespace:
 
 def test_file_contents_rejects_directory(tmp_path: Path) -> None:
     ctx = _make_ctx(project_root=str(tmp_path))
-    result = server.file_contents(ctx, str(tmp_path))
+    params = server.LeanFileContentsInput(file_path=str(tmp_path))
+    result = server.file_contents(ctx, params)
 
     assert result["isError"] is True
     structured = result["structuredContent"]
     assert structured["code"] == server.ERROR_INVALID_PATH
     assert structured["details"]["kind"] == "directory"
-    # Text message is now at index 1; index 0 is JSON resource
-    assert "directory" in result["content"][1]["text"].lower()
+    # Text summary is the first content item by default
+    assert "directory" in result["content"][0]["text"].lower()
 
 
 def test_file_contents_missing_path(tmp_path: Path) -> None:
     ctx = _make_ctx(project_root=str(tmp_path))
-    result = server.file_contents(ctx, "missing.lean")
+    params = server.LeanFileContentsInput(file_path="missing.lean")
+    result = server.file_contents(ctx, params)
 
     assert result["isError"] is True
     structured = result["structuredContent"]
@@ -49,7 +51,11 @@ def test_file_contents_reads_project_relative(tmp_path: Path) -> None:
     file_path.write_text("import Mathlib\n\n#check Nat\n", encoding="utf-8")
 
     ctx = _make_ctx(project_root=str(tmp_path))
-    result = server.file_contents(ctx, "Formalization/example.lean", annotate_lines=True)
+    params = server.LeanFileContentsInput(
+        file_path="Formalization/example.lean",
+        annotate_lines=True,
+    )
+    result = server.file_contents(ctx, params)
 
     assert result["isError"] is False
     structured = result["structuredContent"]
@@ -60,7 +66,7 @@ def test_file_contents_reads_project_relative(tmp_path: Path) -> None:
     assert lines[0]["text"] == "import Mathlib"
     assert lines[1]["text"] == ""
     assert lines[2]["text"] == "#check Nat"
-    # Summary follows the JSON resource
-    summary = result["content"][1]["text"]
+    # Summary appears as the first content item
+    summary = result["content"][0]["text"]
     assert summary
     assert "/" in summary

@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import io
 import os
@@ -160,7 +161,7 @@ class OutputCapture:
 
 
 def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional[LSPRange]:
-    """Return a shallow copy of a 0-based LSP range."""
+    """Return a shallow copy of an LSP range using 1-based indexing."""
 
     if not range_dict:
         return None
@@ -168,14 +169,18 @@ def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional
     try:
         start = range_dict["start"]
         end = range_dict["end"]
+        start_line = int(start["line"])
+        start_char = int(start.get("character", 0))
+        end_line = int(end["line"])
+        end_char = int(end.get("character", 0))
         return {
             "start": {
-                "line": int(start["line"]),
-                "character": int(start["character"]),
+                "line": start_line + 1,
+                "character": start_char + 1,
             },
             "end": {
-                "line": int(end["line"]),
-                "character": int(end["character"]),
+                "line": end_line + 1,
+                "character": end_char + 1,
             },
         }
     except (KeyError, TypeError, ValueError):  # pragma: no cover - defensive guard
@@ -203,7 +208,13 @@ def compute_pagination(
         "has_more": has_more,
     }
     if has_more:
-        meta["next_start_line"] = end_line + 1
+        next_line = end_line + 1
+        meta["next_start_line"] = next_line
+        try:
+            cursor_bytes = str(next_line).encode("ascii")
+            meta["nextCursor"] = base64.urlsafe_b64encode(cursor_bytes).decode("ascii")
+        except Exception:  # pragma: no cover - defensive guard
+            pass
     return start_line, end_line, meta
 
 
@@ -625,7 +636,7 @@ def find_start_position(content: str, query: str) -> dict | None:
     for line_number, line in enumerate(lines):
         char_index = line.find(query)
         if char_index != -1:
-            return {"line": line_number, "column": char_index}
+            return {"line": line_number + 1, "column": char_index + 1}
     return None
 
 

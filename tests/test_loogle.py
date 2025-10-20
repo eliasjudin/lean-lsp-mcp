@@ -59,7 +59,8 @@ def test_loogle_handles_missing_doc(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.loogle(ctx=ctx, query="Real.sin", num_results=3)
+    params = server_module.LoogleSearchInput(query="Real.sin", num_results=3)
+    response = server_module.loogle(ctx, params)
 
     assert response["isError"] is False
     structured = response["structuredContent"]
@@ -87,7 +88,8 @@ def test_loogle_truncates_results_and_strips_doc(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.loogle(ctx=ctx, query="demo", num_results=1)
+    params = server_module.LoogleSearchInput(query="demo", num_results=1)
+    response = server_module.loogle(ctx, params)
 
     assert response["isError"] is False
     structured = response["structuredContent"]
@@ -111,7 +113,8 @@ def test_loogle_defaults_to_compact(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.loogle(ctx=ctx, query="demo", num_results=1)
+    params = server_module.LoogleSearchInput(query="demo", num_results=1)
+    response = server_module.loogle(ctx, params)
 
     assert response["isError"] is False
     structured = response["structuredContent"]
@@ -129,13 +132,17 @@ def test_loogle_returns_error_when_no_results(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.loogle(ctx=ctx, query="missing", num_results=2)
+    params = server_module.LoogleSearchInput(query="missing", num_results=2)
+    response = server_module.loogle(ctx, params)
 
     assert response["isError"] is True
-    # JSON resource first, then message
-    assert response["content"][0]["type"] == "resource"
-    assert response["content"][0]["resource"]["mimeType"] == "application/json"
-    assert response["content"][1]["text"] == "No results found."
+    # Markdown error summary is first by default
+    summary_block = response["content"][0]
+    assert summary_block["type"] == "text"
+    error_lines = summary_block["text"].splitlines()
+    assert error_lines[0] == "**Summary:** Error: No results found."
+    assert "- Code: `unknown`" in error_lines[1]
+    assert "- Category: lean_loogle" in error_lines[2]
     structured = response["structuredContent"]
     assert structured["category"] == "lean_loogle"
     assert structured["code"] == server_module.ERROR_UNKNOWN
@@ -160,7 +167,8 @@ def test_leansearch_handles_missing_docstring(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.leansearch(ctx=ctx, query="Foo", num_results=5)
+    params = server_module.LeanSearchInput(query="Foo", num_results=5)
+    response = server_module.leansearch(ctx, params)
 
     assert response["isError"] is False
     structured = response["structuredContent"]
@@ -186,7 +194,8 @@ def test_leansearch_defaults_to_compact(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.leansearch(ctx=ctx, query="Foo", num_results=5)
+    params = server_module.LeanSearchInput(query="Foo", num_results=5)
+    response = server_module.leansearch(ctx, params)
 
     assert response["isError"] is False
     structured = response["structuredContent"]
@@ -204,12 +213,16 @@ def test_leansearch_returns_error_when_empty(monkeypatch, server_module):
     monkeypatch.setattr(server_module.urllib.request, "urlopen", fake_urlopen)
 
     ctx = make_ctx()
-    response = server_module.leansearch(ctx=ctx, query="nothing", num_results=2)
+    params = server_module.LeanSearchInput(query="nothing", num_results=2)
+    response = server_module.leansearch(ctx, params)
 
     assert response["isError"] is True
-    # JSON resource first, then message
-    content = response["content"][1]
-    assert content["text"] == "No results found."
+    summary_block = response["content"][0]
+    assert summary_block["type"] == "text"
+    error_lines = summary_block["text"].splitlines()
+    assert error_lines[0] == "**Summary:** Error: No results found."
+    assert "- Code: `unknown`" in error_lines[1]
+    assert "- Category: lean_leansearch" in error_lines[2]
     structured = response["structuredContent"]
     assert structured["category"] == "lean_leansearch"
     assert structured["code"] == server_module.ERROR_UNKNOWN

@@ -12,6 +12,7 @@ from importlib.metadata import PackageNotFoundError, version
 import urllib
 import json
 import functools
+import inspect
 import subprocess
 import uuid
 from threading import Lock
@@ -28,8 +29,15 @@ from lean_lsp_mcp.file_utils import (
     update_file,
 )
 from lean_lsp_mcp.instructions import INSTRUCTIONS
-from lean_lsp_mcp.tool_spec import build_tool_spec
+from lean_lsp_mcp.tool_spec import TOOL_ANNOTATIONS, TOOL_SPEC_VERSION, build_tool_spec
 from lean_lsp_mcp.schema import mcp_result
+from lean_lsp_mcp.response_formatter import (
+    JSON_RESPONSE_FORMAT,
+    apply_character_limit,
+    build_markdown_summary,
+    extend_structured_with_truncation,
+    normalize_response_format,
+)
 from lean_lsp_mcp.schema_types import (
     ERROR_BAD_REQUEST,
     ERROR_CLIENT_NOT_READY,
@@ -58,6 +66,23 @@ from lean_lsp_mcp.utils import (
     summarize_diagnostics,
     uri_to_absolute_path,
 )
+from lean_lsp_mcp.tool_inputs import (
+    LeanBuildInput,
+    LeanCompletionsInput,
+    LeanDeclarationFileInput,
+    LeanDiagnosticMessagesInput,
+    LeanFileContentsInput,
+    LeanGoalInput,
+    LeanHammerPremiseInput,
+    LeanHoverInput,
+    LeanMultiAttemptInput,
+    LeanRunCodeInput,
+    LeanSearchInput,
+    LeanStateSearchInput,
+    LeanTermGoalInput,
+    LeanToolSpecInput,
+    LoogleSearchInput,
+)
 from lean_lsp_mcp.leanclient_provider import (
     LeanclientNotInstalledError,
     ensure_leanclient_available,
@@ -66,6 +91,9 @@ from lean_lsp_mcp.leanclient_provider import (
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard for typing only
     from leanclient import DocumentContentChange, LeanLSPClient
+else:
+    DocumentContentChange = Any  # type: ignore[assignment]
+    LeanLSPClient = Any  # type: ignore[assignment]
 
 
 try:  # pragma: no cover - metadata lookup may fail in tests
@@ -77,15 +105,35 @@ except PackageNotFoundError:  # pragma: no cover - local dev fallback
 logger = get_logger(__name__)
 
 
+# Shared resource identifiers
+TOOL_SPEC_RESOURCE_URI = f"tool-spec://lean_lsp_mcp/{TOOL_SPEC_VERSION}.json"
+
+
 # Server and context
-@dataclass
 class AppContext:
     lean_project_path: str | None
-    client: LeanLSPClient | None
+    client: Any  # LeanLSPClient | None
     file_content_hashes: Dict[str, str]
     rate_limit: Dict[str, List[int]]
     project_cache: Dict[str, str]
     client_lock: Lock
+
+    def __init__(
+        self,
+        *,
+        lean_project_path: str | None,
+        client: Any,
+        file_content_hashes: Dict[str, str],
+        rate_limit: Dict[str, List[int]],
+        project_cache: Dict[str, str],
+        client_lock: Lock,
+    ) -> None:
+        self.lean_project_path = lean_project_path
+        self.client = client
+        self.file_content_hashes = file_content_hashes
+        self.rate_limit = rate_limit
+        self.project_cache = project_cache
+        self.client_lock = client_lock
 
 
 @asynccontextmanager
@@ -133,7 +181,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 
 mcp_kwargs = dict(
-    name="Lean LSP",
+    name="lean_lsp_mcp",
     instructions=INSTRUCTIONS,
     lifespan=app_lifespan,
 )
@@ -149,7 +197,114 @@ if auth_token:
     )
     mcp_kwargs["token_verifier"] = OptionalTokenVerifier(auth_token)
 
+def _strip_meta_from_result(result: Any) -> Any:
+    if isinstance(result, dict):
+        result.pop("_meta", None)
+    return result
+
+
+def _disable_meta_emission(server: FastMCP) -> None:
+    """Best-effort removal of FastMCP-generated `_meta` blocks."""
+
+    # Hint to upstream helpers if such an environment flag is honoured.
+    os.environ.setdefault("FASTMCP_DISABLE_META", "1")
+
+    settings = getattr(server, "settings", None)
+    if settings is not None:
+        for attr_name in dir(settings):
+            if "meta" not in attr_name.lower():
+                continue
+            value = getattr(settings, attr_name)
+            try:
+                if isinstance(value, bool):
+                    setattr(settings, attr_name, False)
+                elif isinstance(value, dict):
+                    setattr(settings, attr_name, {})
+                else:
+                    setattr(settings, attr_name, None)
+            except Exception:
+                continue
+
+    def _wrap_callable(parent: Any, name: str, func: Any) -> None:
+        if getattr(func, "__lean_strip_meta__", False):
+            return
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                result = await func(*args, **kwargs)
+                return _strip_meta_from_result(result)
+
+            async_wrapper.__lean_strip_meta__ = True
+            try:
+                setattr(parent, name, async_wrapper)
+            except Exception:
+                pass
+        elif callable(func):
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                result = func(*args, **kwargs)
+                return _strip_meta_from_result(result)
+
+            wrapper.__lean_strip_meta__ = True
+            try:
+                setattr(parent, name, wrapper)
+            except Exception:
+                pass
+
+    for attr_name in dir(server):
+        lower = attr_name.lower()
+        if "meta" in lower or ("result" in lower and "formatter" not in lower):
+            attr = getattr(server, attr_name)
+            if callable(attr):
+                _wrap_callable(server, attr_name, attr)
+
+    for attr_name in (
+        "result_transformers",
+        "_result_transformers",
+        "response_transformers",
+        "response_filters",
+    ):
+        transforms = getattr(server, attr_name, None)
+        if isinstance(transforms, list):
+            transforms.append(_strip_meta_from_result)
+        elif transforms is None:
+            try:
+                setattr(server, attr_name, [_strip_meta_from_result])
+            except Exception:
+                pass
+
+    for attr_name in (
+        "_build_result_meta",
+        "build_result_meta",
+        "_build_meta_block",
+        "build_meta_block",
+    ):
+        if hasattr(server, attr_name):
+            try:
+                setattr(server, attr_name, lambda *args, **kwargs: None)
+            except Exception:
+                pass
+
+    if hasattr(server, "server_version"):
+        try:
+            setattr(server, "server_version", None)
+        except Exception:
+            pass
+
+
 mcp = FastMCP(**mcp_kwargs)
+_disable_meta_emission(mcp)
+
+
+def _set_response_format_hint(ctx: Context | None, response_format: Optional[str]) -> None:
+    """Stash the caller's preferred response format on the request context."""
+
+    if ctx is None:
+        return
+
+    request_context = getattr(ctx, "request_context", None)
+    if request_context is not None:
+        setattr(request_context, "_response_format_hint", response_format)
 
 
 @contextmanager
@@ -174,15 +329,23 @@ class ToolError(Exception):
         self.payload = payload
 
 
-@dataclass
 class LeanFileSession:
     """State bundle for working with a Lean file while the client lock is held."""
 
-    ctx: Context
-    client: LeanLSPClient
-    rel_path: str
-    identity: FileIdentity
-    _content: str | None = None
+    def __init__(
+        self,
+        *,
+        ctx: Context,
+        client: Any,
+        rel_path: str,
+        identity: FileIdentity,
+        content: str | None = None,
+    ) -> None:
+        self.ctx = ctx
+        self.client = client
+        self.rel_path = rel_path
+        self.identity = identity
+        self._content = content
 
     def load_content(self, *, refresh: bool = False) -> str:
         """Load and cache the current file contents via the LSP client."""
@@ -220,6 +383,7 @@ def open_file_session(
     file_path: str,
     *,
     started: float,
+    response_format: Optional[str] = None,
     line: int | None = None,
     column: int | None = None,
     category: str | None = None,
@@ -255,6 +419,7 @@ def open_file_session(
                 details=dependency_payload,
                 start_time=started,
                 ctx=ctx,
+                response_format=response_format,
             )
         )
     if not rel_path:
@@ -266,6 +431,7 @@ def open_file_session(
                 details=invalid_payload,
                 start_time=started,
                 ctx=ctx,
+                response_format=response_format,
             )
         )
 
@@ -283,12 +449,13 @@ def open_file_session(
                 error_result(
                     message=client_message,
                     code=ERROR_CLIENT_NOT_READY,
-                    category=category,
-                    details=ready_payload,
-                    start_time=started,
-                    ctx=ctx,
-                )
+                category=category,
+                details=ready_payload,
+                start_time=started,
+                ctx=ctx,
+                response_format=response_format,
             )
+        )
 
         yield LeanFileSession(
             ctx=ctx,
@@ -328,54 +495,6 @@ def _json_item(structured: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
-def _extract_request_id(ctx: Context | None) -> str | None:
-    """Best-effort extraction of the MCP request identifier."""
-
-    if ctx is None:
-        return None
-
-    candidates = []
-    for attr in ("request_id", "requestId", "requestID", "id"):
-        value = getattr(ctx, attr, None)
-        if value:
-            return str(value)
-
-    request_context = getattr(ctx, "request_context", None)
-    if request_context is None:
-        return None
-
-    for attr in ("request_id", "requestId", "requestID", "id"):
-        value = getattr(request_context, attr, None)
-        if value:
-            return str(value)
-
-    rpc_request = getattr(request_context, "rpc_request", None)
-    if rpc_request is not None:
-        for attr in ("request_id", "requestId", "requestID", "id"):
-            value = getattr(rpc_request, attr, None)
-            if value:
-                return str(value)
-
-    rpc_request_id = getattr(request_context, "rpc_request_id", None)
-    if rpc_request_id:
-        return str(rpc_request_id)
-
-    return None
-
-
-def _build_meta(ctx: Context | None, start_time: float) -> Dict[str, Any]:
-    """Construct the `_meta` payload for tool responses."""
-
-    duration_ms = max(int((time.perf_counter() - start_time) * 1000), 0)
-    meta: Dict[str, Any] = {"duration_ms": duration_ms}
-
-    request_id = _extract_request_id(ctx)
-    if request_id:
-        meta["request_id"] = request_id
-
-    return meta
-
-
 def success_result(
     *,
     summary: str,
@@ -383,22 +502,120 @@ def success_result(
     start_time: float,
     ctx: Context | None = None,
     content: List[Dict[str, Any]] | None = None,
+    response_format: str | None = None,
 ) -> Dict[str, Any]:
-    # Machine-first: if we have structured content, expose it as the first
-    # content item (JSON resource). Append caller-provided content items next,
-    # or (if none provided) a human-readable summary.
+    # Avoid double-reporting the summary when callers include it in the
+    # auxiliary content list.
+    additional_items = list(content or [])
+    if additional_items:
+        first = additional_items[0]
+        if first.get("type") == "text" and first.get("text") == summary:
+            additional_items = additional_items[1:]
+
+    if response_format is None and ctx is not None:
+        request_context = getattr(ctx, "request_context", None)
+        if request_context is not None:
+            response_format = getattr(request_context, "_response_format_hint", None)
+
+    selected_format = normalize_response_format(response_format)
+    summary_markdown = build_markdown_summary(summary)
+    human_items = [_text_item(summary_markdown), *additional_items]
+
+    limited_items, truncated, truncated_sections = apply_character_limit(human_items)
+    structured_payload = extend_structured_with_truncation(
+        structured,
+        truncated=truncated,
+        truncated_sections=truncated_sections,
+    )
+
+    summary_item: Dict[str, Any] | None = None
+    remaining_items: List[Dict[str, Any]] = []
+    for item in limited_items:
+        if summary_item is None and item.get("type") == "text":
+            summary_item = item
+            continue
+        remaining_items.append(item)
+
+    if selected_format == JSON_RESPONSE_FORMAT:
+        if structured_payload is not None:
+            meta = structured_payload.setdefault("_meta", {})
+            if summary:
+                meta.setdefault("summary", summary)
+            structured_for_json = structured_payload
+        else:
+            structured_for_json = {"summary": summary} if summary else {}
+
+        payload: List[Dict[str, Any]] = []
+        payload.append(_json_item(structured_for_json))
+        payload.extend(remaining_items)
+
+        return mcp_result(
+            content=payload or [_text_item(summary_markdown)],
+            structured=structured_for_json if structured_for_json else None,
+        )
+
     payload: List[Dict[str, Any]] = []
-    if structured is not None:
-        payload.append(_json_item(structured))
-    if content:
-        payload.extend(content)
+    if summary_item is not None:
+        payload.append(summary_item)
     else:
-        payload.append(_text_item(summary))
+        payload.append(_text_item(summary_markdown))
+    payload.extend(remaining_items)
+
     return mcp_result(
         content=payload,
-        structured=structured,
-        meta=_build_meta(ctx, start_time),
+        structured=structured_payload,
     )
+
+
+def _derive_error_hints(
+    *,
+    code: str | None,
+    category: str | None,
+    details: Dict[str, Any] | None,
+    ctx: Context | None,
+) -> List[str]:
+    hints: List[str] = []
+
+    def _append(text: str | None) -> None:
+        candidate = (text or "").strip()
+        if candidate and candidate not in hints:
+            hints.append(candidate)
+
+    lifespan = None
+    if ctx is not None:
+        lifespan = getattr(ctx.request_context, "lifespan_context", None)
+    project_root = getattr(lifespan, "lean_project_path", None) if lifespan else None
+
+    if code == ERROR_CLIENT_NOT_READY:
+        _append("Run `lean_build` to initialize the Lean project and restart the Lean LSP client.")
+
+    if code in {ERROR_CLIENT_NOT_READY, ERROR_INVALID_PATH, ERROR_BAD_REQUEST} and not project_root:
+        _append(
+            "Set `LEAN_PROJECT_PATH` or pass `lean_project_path` to the tool so the server knows your project root."
+        )
+
+    if code == ERROR_BAD_REQUEST:
+        _append("Call `lean_tool_spec` to review required parameters and defaults for this tool.")
+
+    if code == ERROR_IO_FAILURE:
+        detail_keys = details.keys() if isinstance(details, dict) else []
+        if "output" in detail_keys or "error" in detail_keys:
+            _append("Inspect the failure details (e.g. `output` or `error`) to fix the underlying Lean command before retrying.")
+        _append("Run `lean_build` after addressing the issue to verify the project compiles cleanly.")
+
+    if code == ERROR_RATE_LIMIT:
+        _append("Wait a few seconds before retrying, or reduce duplicate requests to stay within the rate limit.")
+
+    if code == ERROR_NO_GOAL:
+        _append("Ensure the requested location has an active Lean goal (for example, inside an unfinished proof).")
+
+    if code == ERROR_NOT_GOAL_POSITION:
+        _append("Move the cursor to a goal position or adjust the Lean code so a goal is produced at that location before retrying.")
+
+    if not hints:
+        _append("If the problem persists, rerun `lean_build` to refresh the Lean client and try again.")
+
+    return hints
 
 
 def error_result(
@@ -409,6 +626,8 @@ def error_result(
     code: str | None = None,
     category: str | None = None,
     details: Dict[str, Any] | None = None,
+    hints: List[str] | None = None,
+    response_format: str | None = None,
 ) -> Dict[str, Any]:
     structured: Dict[str, Any] = {"message": message}
     if code:
@@ -417,12 +636,79 @@ def error_result(
         structured["category"] = category
     if details:
         structured["details"] = details
-    content: List[Dict[str, Any]] = [_json_item(structured), _text_item(message)]
+
+    derived_hints = _derive_error_hints(
+        code=code,
+        category=category,
+        details=details,
+        ctx=ctx,
+    )
+    combined_hints: List[str] = []
+    for source in (hints or [], derived_hints):
+        for hint in source:
+            if hint not in combined_hints:
+                combined_hints.append(hint)
+    if combined_hints:
+        structured["hints"] = combined_hints
+
+    detail_bullets: List[str] = []
+    if code:
+        detail_bullets.append(f"Code: `{code}`")
+    if category:
+        detail_bullets.append(f"Category: {category}")
+    if combined_hints:
+        detail_bullets.extend(f"Hint: {hint}" for hint in combined_hints)
+
+    if response_format is None and ctx is not None:
+        request_context = getattr(ctx, "request_context", None)
+        if request_context is not None:
+            response_format = getattr(request_context, "_response_format_hint", None)
+
+    selected_format = normalize_response_format(response_format)
+    summary_markdown = build_markdown_summary(f"Error: {message}", detail_bullets)
+    limited_items, truncated, truncated_sections = apply_character_limit(
+        [_text_item(summary_markdown)]
+    )
+    structured_payload = extend_structured_with_truncation(
+        structured,
+        truncated=truncated,
+        truncated_sections=truncated_sections,
+    )
+
+    summary_item: Dict[str, Any] | None = None
+    other_items: List[Dict[str, Any]] = []
+    for item in limited_items:
+        if summary_item is None and item.get("type") == "text":
+            summary_item = item
+            continue
+        other_items.append(item)
+
+    if selected_format == JSON_RESPONSE_FORMAT:
+        structured_for_json: Dict[str, Any] = (
+            structured_payload if structured_payload is not None else {}
+        )
+        meta = structured_for_json.setdefault("_meta", {})
+        meta.setdefault("summary", f"Error: {message}")
+        payload: List[Dict[str, Any]] = []
+        payload.append(_json_item(structured_for_json))
+        payload.extend(other_items)
+        return mcp_result(
+            content=payload,
+            structured=structured_for_json if structured_for_json else None,
+            is_error=True,
+        )
+
+    payload: List[Dict[str, Any]] = []
+    if summary_item is not None:
+        payload.append(summary_item)
+    else:
+        payload.append(_text_item(summary_markdown))
+    payload.extend(other_items)
+
     return mcp_result(
-        content=content,
-        structured=structured,
+        content=payload,
+        structured=structured_payload,
         is_error=True,
-        meta=_build_meta(ctx, start_time),
     )
 
 
@@ -497,20 +783,61 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
 
 
 # Project level tools
-@mcp.tool("lean_build")
-def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, _format: Optional[str] = None) -> Any:
-    """Build the Lean project and restart the LSP Server.
+@mcp.tool(
+    "lean_build",
+    description="Run `lake build` (optionally `lake clean`) to refresh the Lean project and restart the cached Lean LSP client.",
+    annotations=TOOL_ANNOTATIONS["lean_build"]
+)
+def lsp_build(ctx: Context, params: LeanBuildInput) -> Any:
+    """Compile the Lean project and refresh the cached Lean language server.
 
-    Use only if needed (e.g. new imports).
+    This tool wraps ``lake build`` (and optionally ``lake clean``) so automated agents
+    can bring the Lean workspace into a consistent state before invoking goal-oriented
+    tools. The MCP server restarts its cached Lean LSP client after building, ensuring
+    diagnostics and goals reflect the freshly built artifacts.
 
-    Args:
-        lean_project_path (str, optional): Path to the Lean project. If not provided, it will be inferred from previous tool calls.
-        clean (bool, optional): Run `lake clean` before building. Attention: Only use if it is really necessary! It can take a long time! Defaults to False.
+    Parameters
+    ----------
+    params : LeanBuildInput
+        Validated build options.
+        - ``lean_project_path`` (Optional[str]): Absolute project root. Falls back to
+          the path inferred from previous tool calls or the ``LEAN_PROJECT_PATH`` env.
+        - ``clean`` (bool, default=False): Run ``lake clean`` first to purge build
+          artifacts. Only enable when dependencies changed drastically; it slows the
+          workflow and deletes incremental outputs.
+        - ``response_format`` (Optional[str]): Legacy formatting hint accepted for
+          compatibility. The return payload is structured independently of this flag.
 
-    Returns:
-        str: Build output or error msg
+    Returns
+    -------
+    LeanBuildResult
+        ``structuredContent`` includes ``status``, ``project.path``, ``clean``, and
+        ``lsp_restarted``. The textual summary states whether the build succeeded and
+        when feasible attaches the captured ``lake`` log as a resource. Errors set
+        ``isError=True`` with diagnostic metadata in ``details``.
+
+    Use when
+    --------
+    - New files or dependencies require recompilation before inspecting goals.
+    - Goal/diagnostic tools report stale data after large edits.
+
+    Avoid when
+    ----------
+    - You only need read-only inspection (use the *lean_file_contents* family instead).
+    - The project already compiled successfully and no new dependencies were added.
+
+    Error handling
+    --------------
+    - Missing project roots raise ``ERROR_BAD_REQUEST`` with remediation guidance.
+    - ``lake`` failures surface as ``ERROR_IO_FAILURE`` and include captured stdout /
+      stderr snippets to speed up debugging.
     """
     started = time.perf_counter()
+    lean_project_path = params.lean_project_path or None
+    clean = params.clean
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     if not lean_project_path:
         lean_project_path = ctx.request_context.lifespan_context.lean_project_path
     else:
@@ -527,6 +854,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
             code=ERROR_BAD_REQUEST,
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
 
     build_output = ""
@@ -585,6 +913,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
                 start_time=started,
                 ctx=ctx,
                 content=content_items,
+                response_format=response_format,
             )
 
         # Fallback path: leanclient not installed; run `lake build` directly.
@@ -612,6 +941,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
                 details=details,
                 start_time=started,
                 ctx=ctx,
+                response_format=response_format,
             )
 
         lifespan.client = None
@@ -631,6 +961,7 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
             start_time=started,
             ctx=ctx,
             content=content_items,
+            response_format=response_format,
         )
     except Exception as exc:
         if build_output_parts:
@@ -647,33 +978,63 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False, 
             details=details,
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
 
 
 # File level tools
-@mcp.tool("lean_file_contents")
-def file_contents(
-    ctx: Context,
-    file_path: str,
-    annotate_lines: bool = True,
-    start_line: Optional[int] = None,
-    line_count: Optional[int] = None,
-    _format: Optional[str] = None,
-) -> Any:
-    """Get the text contents of a Lean file, optionally with line numbers.
+@mcp.tool(
+    "lean_file_contents",
+    description="Read Lean source text with optional 1-indexed annotations; `structured.lines` preserves numbering for downstream agents.",
+    annotations=TOOL_ANNOTATIONS["lean_file_contents"]
+)
+def file_contents(ctx: Context, params: LeanFileContentsInput) -> Any:
+    """Read a Lean source file with optional line annotations and slicing.
 
-    Args:
-        file_path (str): Path to the Lean file. Absolute paths are recommended. Relative
-            paths are resolved against the configured Lean project root (if available)
-            or else the current working directory.
-        annotate_lines (bool, optional): Annotate lines with line numbers. Defaults to True.
-        start_line (int, optional): 1-based line to start from.
-        line_count (int, optional): Number of lines to return from ``start_line``.
+    Parameters
+    ----------
+    params : LeanFileContentsInput
+        Validated file selection options.
+        - ``file_path`` (str): Absolute or project-relative file path. Relative paths
+          are resolved against the active Lean project root or current working dir.
+        - ``annotate_lines`` (bool = True): Prepend each returned line with ``N│`` to
+          help downstream tools reference positions precisely.
+        - ``start_line`` (Optional[int]): 1-based line to start reading from.
+        - ``line_count`` (Optional[int]): Number of lines to stream from ``start_line``.
+        - ``response_format`` (Optional[str]): Legacy formatting flag. The tool always
+          returns structured content plus a Markdown/text summary.
 
-    Returns:
-        str: File content or error msg
+    Returns
+    -------
+    FileContents
+        ``structuredContent`` includes file identity metadata and the requested text
+        segment. When ``annotate_lines`` is true the payload exposes both raw text and
+        formatted lines. Errors emit ``ERROR_INVALID_PATH`` for missing files or
+        ``ERROR_BAD_REQUEST`` when pagination parameters are inconsistent.
+
+    Use when
+    --------
+    - Inspecting Lean code before deciding which proof tool to call.
+    - Sharing file excerpts and line numbers in evaluation workflows.
+
+    Avoid when
+    ----------
+    - You only need file metadata (use other tooling).
+    - You plan to modify files (this tool is strictly read-only).
+
+    Error handling
+    --------------
+    - Missing or unreadable paths return actionable guidance with sanitized paths.
+    - Pagination parameters outside valid ranges surface as ``ERROR_BAD_REQUEST``.
     """
     started = time.perf_counter()
+    file_path = params.file_path
+    annotate_lines = params.annotate_lines
+    start_line = params.start_line
+    line_count = params.line_count
+    response_format = params.response_format  # Accept `_format` hints without altering behaviour.
+    _set_response_format_hint(ctx, response_format)
+
     sanitized_path = _sanitize_path_label(file_path)
     lifespan = ctx.request_context.lifespan_context
     project_root = getattr(lifespan, "lean_project_path", None)
@@ -738,6 +1099,7 @@ def file_contents(
             details=details,
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
 
     resolved_path = os.path.abspath(resolved_path)
@@ -750,6 +1112,7 @@ def file_contents(
             details={"path": sanitized_path, "kind": "directory"},
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
 
     try:
@@ -764,6 +1127,7 @@ def file_contents(
             details={"path": sanitized_path},
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
     except IsADirectoryError:
         message = f"Path `{sanitized_path}` is a directory. Provide a Lean source file."
@@ -773,6 +1137,7 @@ def file_contents(
             details={"path": sanitized_path, "kind": "directory"},
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
 
     if start_line is not None and start_line < 1:
@@ -782,6 +1147,7 @@ def file_contents(
             details={"start_line": start_line},
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
     if line_count is not None and line_count < 1:
         return error_result(
@@ -790,6 +1156,7 @@ def file_contents(
             details={"line_count": line_count},
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
 
     rel_path = None
@@ -811,6 +1178,7 @@ def file_contents(
             details={"start_line": start_line, "total_lines": total_lines},
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
     if total_lines == 0 and start_line and start_line > 1:
         return error_result(
@@ -819,6 +1187,7 @@ def file_contents(
             details={"start_line": start_line, "total_lines": total_lines},
             start_time=started,
             ctx=ctx,
+            response_format=response_format,
         )
 
     start, end, pagination_meta = compute_pagination(
@@ -875,32 +1244,64 @@ def file_contents(
         start_time=started,
         ctx=ctx,
         content=content_list,
+        response_format=response_format,
     )
 
 
-@mcp.tool("lean_diagnostic_messages")
-def diagnostic_messages(
-    ctx: Context,
-    file_path: str,
-    start_line: Optional[int] = None,
-    line_count: Optional[int] = None,
-    _format: Optional[str] = None,
-) -> Any:
-    """Get all diagnostic msgs (errors, warnings, infos) for a Lean file.
+@mcp.tool(
+    "lean_diagnostic_messages",
+    description="List Lean diagnostics for a file window; `structured.summary.count` reports totals and `structured.diags` encode zero-based ranges for tooling.",
+    annotations=TOOL_ANNOTATIONS["lean_diagnostic_messages"]
+)
+def diagnostic_messages(ctx: Context, params: LeanDiagnosticMessagesInput) -> Any:
+    """Collect Lean compiler diagnostics for the requested file window.
 
-    "no goals to be solved" means code may need removal.
+    Parameters
+    ----------
+    params : LeanDiagnosticMessagesInput
+        Validated diagnostic query.
+        - ``file_path`` (str): Absolute or project-relative path to the Lean file.
+        - ``start_line`` (Optional[int]): 1-based line where diagnostics should begin.
+        - ``line_count`` (Optional[int]): Number of lines to inspect from ``start_line``.
+        - ``response_format`` (Optional[str]): Optional hint accepted for compatibility.
 
-    Args:
-        file_path (str): Abs path to Lean file
-        start_line (int, optional): 1-based line to start from.
-        line_count (int, optional): Number of lines to include.
+    Returns
+    -------
+    Diagnostics
+        ``structuredContent`` includes a list of Lean diagnostic entries with
+        severity, message, positions, and affected range. The textual summary
+        communicates how many diagnostics matched and whether pagination applied.
+        Errors set ``isError=True`` with detailed context under ``details``.
 
-    Returns:
-        List[str] | str: Diagnostic msgs or error msg
+    Use when
+    --------
+    - You need to triage Lean errors or warnings before attempting repairs.
+    - Narrowing diagnostic scope to a snippet during evaluation scenarios.
+
+    Avoid when
+    ----------
+    - You require goal states or term information (use ``lean_goal`` / ``lean_term_goal``).
+    - You expect the tool to write fixes; it is strictly read-only.
+
+    Error handling
+    --------------
+    - Invalid line ranges return ``ERROR_BAD_REQUEST`` with offending parameters.
+    - Missing files raise ``ERROR_INVALID_PATH`` and provide sanitized path hints.
     """
     started = time.perf_counter()
+    file_path = params.file_path
+    start_line = params.start_line
+    line_count = params.line_count
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
-        with open_file_session(ctx, file_path, started=started) as file_session:
+        with open_file_session(
+            ctx,
+            file_path,
+            started=started,
+            response_format=response_format,
+        ) as file_session:
             if start_line is not None and start_line < 1:
                 return error_result(
                     message="`start_line` must be >= 1",
@@ -908,6 +1309,7 @@ def diagnostic_messages(
                     details={"start_line": start_line},
                     start_time=started,
                     ctx=ctx,
+                    response_format=response_format,
                 )
             if line_count is not None and line_count < 1:
                 return error_result(
@@ -916,6 +1318,7 @@ def diagnostic_messages(
                     details={"line_count": line_count},
                     start_time=started,
                     ctx=ctx,
+                    response_format=response_format,
                 )
 
             identity = file_session.identity
@@ -928,6 +1331,7 @@ def diagnostic_messages(
                     details={"start_line": start_line, "total_lines": total_lines},
                     start_time=started,
                     ctx=ctx,
+                    response_format=response_format,
                 )
             if total_lines == 0 and start_line and start_line > 1:
                 return error_result(
@@ -936,6 +1340,7 @@ def diagnostic_messages(
                     details={"start_line": start_line, "total_lines": total_lines},
                     start_time=started,
                     ctx=ctx,
+                    response_format=response_format,
                 )
 
             start, end, pagination_meta = compute_pagination(
@@ -1048,40 +1453,69 @@ def diagnostic_messages(
                 structured=structured,
                 start_time=started,
                 ctx=ctx,
+                response_format=response_format,
             )
     except ToolError as exc:
         return exc.payload
 
 
-@mcp.tool("lean_goal")
-def goal(
-    ctx: Context,
-    file_path: str,
-    line: int,
-    column: Optional[int] = None,
-    _format: Optional[str] = None,
-) -> Any:
-    """Get the proof goals (proof state) at a specific location in a Lean file.
+@mcp.tool(
+    "lean_goal",
+    description="Inspect Lean proof goals at a 1-indexed file position; omitting the column probes line boundaries and returns compact `goals` entries with first-line previews.",
+    annotations=TOOL_ANNOTATIONS["lean_goal"]
+)
+def goal(ctx: Context, params: LeanGoalInput) -> Any:
+    """Retrieve the Lean proof goals at a specific file location.
 
-    VERY USEFUL! Main tool to understand the proof state and its evolution!
-    Returns "no goals" if solved.
-    To see the goal at sorry, use the cursor before the "s".
-    Avoid giving a column if unsure-default behavior works well.
+    Parameters
+    ----------
+    params : LeanGoalInput
+        Validated cursor location.
+        - ``file_path`` (str): Absolute or project-relative Lean source path.
+        - ``line`` (int): 1-based line number to inspect.
+        - ``column`` (Optional[int]): 1-based column. Omit to let the server probe
+          the most relevant position on the line.
+        - ``response_format`` (Optional[str]): Formatting hint accepted for parity;
+          output format is otherwise fixed.
 
-    Args:
-        file_path (str): Abs path to Lean file
-        line (int): Line number (1-indexed)
-        column (int, optional): Column number (1-indexed). Defaults to None => Both before and after the line.
+    Returns
+    -------
+    Goal
+        ``structuredContent`` contains the raw Lean goal state plus a rendered
+        Markdown-friendly version. The summary reports whether goals exist or if the
+        region is solved. Errors mark ``isError=True`` and include context (e.g.
+        ``ERROR_NOT_GOAL_POSITION`` when the location contains no goal).
 
-    Returns:
-        str: Goal(s) or error msg
+    Use when
+    --------
+    - Inspecting outstanding proof obligations at a ``sorry`` or tactic block.
+    - Tracking goal evolution while iterating on snippets with ``lean_multi_attempt``.
+
+    Avoid when
+    ----------
+    - The file fails to parse (run ``lean_diagnostic_messages`` first).
+    - You need the expected type of a term; prefer ``lean_term_goal`` instead.
+
+    Error handling
+    --------------
+    - Missing files or invalid positions surface ``ERROR_INVALID_PATH`` or
+      ``ERROR_BAD_REQUEST`` with actionable details.
+    - When Lean reports no goals, the tool returns a structured payload indicating
+      completion rather than raising an exception.
     """
     started = time.perf_counter()
+    file_path = params.file_path
+    line = params.line
+    column = params.column
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
         with open_file_session(
             ctx,
             file_path,
             started=started,
+            response_format=response_format,
             line=line,
             column=column,
         ) as file_session:
@@ -1100,6 +1534,7 @@ def goal(
                         details={"file": identity["relative_path"], "line": line},
                         start_time=started,
                         ctx=ctx,
+                        response_format=response_format,
                     )
 
                 line_text = lines[line - 1]
@@ -1128,6 +1563,7 @@ def goal(
                         content=[_text_item(summary_text)],
                         start_time=started,
                         ctx=ctx,
+                        response_format=response_format,
                     )
 
                 results = []
@@ -1135,7 +1571,10 @@ def goal(
                     results.append(
                         {
                             "kind": "line_start",
-                            "position": {"line": line - 1, "character": column_start},
+                            "position": {
+                                "line": line - 1,
+                                "character": column_start,
+                            },
                             "goal": goal_to_payload(goal_start),
                         }
                     )
@@ -1143,7 +1582,10 @@ def goal(
                     results.append(
                         {
                             "kind": "line_end",
-                            "position": {"line": line - 1, "character": column_end},
+                            "position": {
+                                "line": line - 1,
+                                "character": column_end,
+                            },
                             "goal": goal_to_payload(goal_end),
                         }
                     )
@@ -1171,8 +1613,33 @@ def goal(
                     )
                     raw_line = pos.get("line")
                     raw_column = pos.get("character")
-                    line_index = max((raw_line + 1) if raw_line is not None else 1, 1)
-                    column_index = max((raw_column + 1) if raw_column is not None else 1, 1)
+                    line_index: int
+                    column_index: int
+                    try:
+                        line_value = int(raw_line) if raw_line is not None else None
+                    except (TypeError, ValueError):
+                        line_value = None
+                    try:
+                        column_value = int(raw_column) if raw_column is not None else None
+                    except (TypeError, ValueError):
+                        column_value = None
+
+                    if line_value is None:
+                        line_index = line
+                    elif line_value >= 0:
+                        line_index = line_value + 1
+                    else:
+                        line_index = line
+
+                    if column_value is None:
+                        column_index = column_start + 1 if kind == "line_start" else column_end + 1
+                    elif column_value >= 0:
+                        column_index = column_value + 1
+                    else:
+                        column_index = column_start + 1 if kind == "line_start" else column_end + 1
+
+                    line_index = max(line_index, 1)
+                    column_index = max(column_index, 1)
                     item: Dict[str, Any] = {
                         "k": ("start" if kind == "line_start" else "end"),
                         "p": [
@@ -1200,6 +1667,7 @@ def goal(
                     content=content_items,
                     start_time=started,
                     ctx=ctx,
+                    response_format=response_format,
                 )
 
             if column < 1:
@@ -1209,6 +1677,7 @@ def goal(
                     details={"file": identity["relative_path"], "line": line, "column": column},
                     start_time=started,
                     ctx=ctx,
+                    response_format=response_format,
                 )
 
             goal_value = client.get_goal(rel_path, line - 1, column - 1)
@@ -1233,6 +1702,7 @@ def goal(
                     content=[_text_item(summary_text)],
                     start_time=started,
                     ctx=ctx,
+                    response_format=response_format,
                 )
 
             summary_text = f"Goal at {line}:{column}."
@@ -1258,31 +1728,67 @@ def goal(
                 content=content_items,
                 start_time=started,
                 ctx=ctx,
+                response_format=response_format,
             )
     except ToolError as exc:
         return exc.payload
 
 
-@mcp.tool("lean_term_goal")
-def term_goal(
-    ctx: Context, file_path: str, line: int, column: Optional[int] = None, _format: Optional[str] = None
-) -> Any:
-    """Get the expected type (term goal) at a specific location in a Lean file.
+@mcp.tool(
+    "lean_term_goal",
+    description="Inspect the expected Lean term type at a 1-indexed location and expose the cleaned `rendered` snippet alongside normalized coordinates.",
+    annotations=TOOL_ANNOTATIONS["lean_term_goal"]
+)
+def term_goal(ctx: Context, params: LeanTermGoalInput) -> Any:
+    """Return the expected term type at a Lean source location.
 
-    Args:
-        file_path (str): Abs path to Lean file
-        line (int): Line number (1-indexed)
-        column (int, optional): Column number (1-indexed). Defaults to None => end of line.
+    Parameters
+    ----------
+    params : LeanTermGoalInput
+        Validated cursor position identical to ``lean_goal`` semantics.
+        - ``file_path`` (str): Absolute or project-relative file path.
+        - ``line`` (int): 1-based line number that contains the expression.
+        - ``column`` (Optional[int]): 1-based column within the line. Defaults to end
+          of the line when omitted.
+        - ``response_format`` (Optional[str]): Formatting hint accepted for parity.
 
-    Returns:
-        str: Expected type or error msg
+    Returns
+    -------
+    Goal
+        ``structuredContent`` includes the rendered term type and the underlying Lean
+        payload so agents can distinguish the exact position inspected. Summary text
+        states whether the expected type was found. Errors set ``isError=True`` with
+        specific error codes for invalid positions or missing files.
+
+    Use when
+    --------
+    - Determining the expected type of a partially written term or placeholder.
+    - Pairing with ``lean_goal`` to understand both hypotheses and target types.
+
+    Avoid when
+    ----------
+    - You require the full goal state (hypotheses + target) – use ``lean_goal``.
+    - The file has outstanding diagnostics that prevent Lean from elaborating.
+
+    Error handling
+    --------------
+    - Out-of-range lines or columns emit ``ERROR_NOT_GOAL_POSITION`` or
+      ``ERROR_BAD_REQUEST`` with debugging context.
+    - Missing files return ``ERROR_INVALID_PATH`` with sanitized path hints.
     """
     started = time.perf_counter()
+    file_path = params.file_path
+    line = params.line
+    column = params.column
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
         with open_file_session(
             ctx,
             file_path,
             started=started,
+            response_format=response_format,
             line=line,
             column=column,
         ) as file_session:
@@ -1370,24 +1876,59 @@ def term_goal(
         return exc.payload
 
 
-@mcp.tool("lean_hover_info")
-def hover(ctx: Context, file_path: str, line: int, column: int, _format: Optional[str] = None) -> Any:
-    """Get hover info (docs for syntax, variables, functions, etc.) at a specific location in a Lean file.
+@mcp.tool(
+    "lean_hover_info",
+    description="Retrieve Lean hover documentation for the symbol under the cursor together with `structured.infoSnippet` and nearby diagnostics.",
+    annotations=TOOL_ANNOTATIONS["lean_hover_info"]
+)
+def hover(ctx: Context, params: LeanHoverInput) -> Any:
+    """Return Lean hover information for the term under the cursor.
 
-    Args:
-        file_path (str): Abs path to Lean file
-        line (int): Line number (1-indexed)
-        column (int): Column number (1-indexed). Make sure to use the start or within the term, not the end.
+    Parameters
+    ----------
+    params : LeanHoverInput
+        Validated hover position.
+        - ``file_path`` (str): Absolute or project-relative Lean file path.
+        - ``line`` (int): 1-based line index.
+        - ``column`` (int): 1-based column pointing inside the identifier or term.
+        - ``response_format`` (Optional[str]): Formatting hint; output schema is fixed.
 
-    Returns:
-        str: Hover info or error msg
+    Returns
+    -------
+    Hover
+        ``structuredContent`` includes symbol documentation, type information, and any
+        source ranges returned by Lean. The textual summary echoes the symbol name when
+        available. Errors mark ``isError=True`` with codes such as ``ERROR_NO_GOAL`` when
+        nothing is hoverable at the requested position.
+
+    Use when
+    --------
+    - Looking up definitions, type signatures, or docstrings for identifiers.
+    - Cross-referencing Lean APIs during evaluation without opening external docs.
+
+    Avoid when
+    ----------
+    - You need declaration source code (use ``lean_declaration_file``).
+    - The file has syntax errors preventing Lean from producing hover info.
+
+    Error handling
+    --------------
+    - Out-of-range positions emit ``ERROR_BAD_REQUEST``.
+    - Missing files surface ``ERROR_INVALID_PATH`` with sanitized details.
     """
     started = time.perf_counter()
+    file_path = params.file_path
+    line = params.line
+    column = params.column
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
         with open_file_session(
             ctx,
             file_path,
             started=started,
+            response_format=response_format,
             line=line,
             column=column,
         ) as file_session:
@@ -1505,32 +2046,61 @@ def hover(ctx: Context, file_path: str, line: int, column: int, _format: Optiona
         return exc.payload
 
 
-@mcp.tool("lean_completions")
-def completions(
-    ctx: Context, file_path: str, line: int, column: int, max_completions: int = 32, _format: Optional[str] = None
-) -> Any:
-    """Get code completions at a location in a Lean file.
+@mcp.tool(
+    "lean_completions",
+    description="Request Lean completion suggestions at a file position.",
+    annotations=TOOL_ANNOTATIONS["lean_completions"]
+)
+def completions(ctx: Context, params: LeanCompletionsInput) -> Any:
+    """Return Lean completion suggestions for the token under the cursor.
 
-    Only use this on INCOMPLETE lines/statements to check available identifiers and imports:
-    - Dot Completion: Displays relevant identifiers after a dot (e.g., `Nat.`, `x.`, or `Nat.ad`).
-    - Identifier Completion: Suggests matching identifiers after part of a name.
-    - Import Completion: Lists importable files after `import` at the beginning of a file.
+    Parameters
+    ----------
+    params : LeanCompletionsInput
+        Validated completion context.
+        - ``file_path`` (str): Absolute or project-relative Lean file path.
+        - ``line`` (int): 1-based line containing the partial identifier.
+        - ``column`` (int): 1-based column within the partial token.
+        - ``max_completions`` (int = 32): Maximum suggestions to return. Values above
+          32 may be truncated for stability.
+        - ``response_format`` (Optional[str]): Formatting hint, ignored by the tool.
 
-    Args:
-        file_path (str): Abs path to Lean file
-        line (int): Line number (1-indexed)
-        column (int): Column number (1-indexed)
-        max_completions (int, optional): Maximum number of completions to return. Defaults to 32
+    Returns
+    -------
+    Completions
+        ``structuredContent`` lists Lean completion items with kind, text, replacement
+        ranges, and documentation. The summary names the symbol being completed when
+        available. Errors set ``isError=True`` with explicit codes for invalid ranges.
 
-    Returns:
-        str: List of possible completions or error msg
+    Use when
+    --------
+    - Exploring which identifiers or namespace members are available at a location.
+    - Auto-completing imports, attribute names, and tactic suggestions during proofs.
+
+    Avoid when
+    ----------
+    - You need semantic info about an already-complete term (use ``lean_hover_info``).
+    - The file fails to parse; run ``lean_diagnostic_messages`` first.
+
+    Error handling
+    --------------
+    - Out-of-range positions emit ``ERROR_BAD_REQUEST``.
+    - Missing files raise ``ERROR_INVALID_PATH`` with sanitized details.
     """
     started = time.perf_counter()
+    file_path = params.file_path
+    line = params.line
+    column = params.column
+    max_completions = params.max_completions
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
         with open_file_session(
             ctx,
             file_path,
             started=started,
+            response_format=response_format,
             line=line,
             column=column,
         ) as file_session:
@@ -1621,16 +2191,59 @@ def completions(
         return exc.payload
 
 
-@mcp.tool("lean_declaration_file")
-def declaration_file(ctx: Context, file_path: str, symbol: str, _format: Optional[str] = None) -> Any:
-    """Get the file contents where a symbol/lemma/class/structure is declared."""
+@mcp.tool(
+    "lean_declaration_file",
+    description="Open the Lean source file that defines a given declaration and surface declaration path metadata for navigation.",
+    annotations=TOOL_ANNOTATIONS["lean_declaration_file"]
+)
+def declaration_file(ctx: Context, params: LeanDeclarationFileInput) -> Any:
+    """Open the source file that defines a Lean symbol and return its contents.
+
+    Parameters
+    ----------
+    params : LeanDeclarationFileInput
+        Validated declaration lookup.
+        - ``file_path`` (str): Lean source file containing a reference to ``symbol``.
+        - ``symbol`` (str): Fully qualified or local name of the declaration to locate.
+        - ``response_format`` (Optional[str]): Formatting hint, ignored by the tool.
+
+    Returns
+    -------
+    Declaration
+        ``structuredContent`` surfaces the origin location and the declaration file
+        metadata. When the declaration file is small, its contents are attached as an
+        inline resource to simplify follow-up analysis. Errors set ``isError=True`` and
+        include ``ERROR_INVALID_PATH`` or ``ERROR_UNKNOWN`` when the symbol cannot be
+        resolved by the Lean LSP.
+
+    Use when
+    --------
+    - You need to read the implementation of a referenced theorem or definition.
+    - Preparing context for prompts that require the declaration source text.
+
+    Avoid when
+    ----------
+    - You only need quick documentation (use ``lean_hover_info``).
+    - Symbols resolve to generated or external library code that is not accessible.
+
+    Error handling
+    --------------
+    - Missing symbols return actionable error details with sanitized file paths.
+    - Non-existent files produce ``ERROR_INVALID_PATH`` listing the offending target.
+    """
 
     started = time.perf_counter()
+    file_path = params.file_path
+    symbol = params.symbol
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
         with open_file_session(
             ctx,
             file_path,
             started=started,
+            response_format=response_format,
             category="lean_declaration_file",
             invalid_details={"symbol": symbol},
             client_details={"symbol": symbol},
@@ -1655,8 +2268,10 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, _format: Optiona
                     ctx=ctx,
                 )
 
+            decl_line = max(position["line"] - 1, 0)
+            decl_col = max(position["column"] - 1, 0)
             declaration = file_session.client.get_declarations(
-                file_session.rel_path, position["line"], position["column"]
+                file_session.rel_path, decl_line, decl_col
             )
             if not declaration:
                 return error_result(
@@ -1729,30 +2344,54 @@ def declaration_file(ctx: Context, file_path: str, symbol: str, _format: Optiona
         return exc.payload
 
 
-@mcp.tool("lean_multi_attempt")
-def multi_attempt(
-    ctx: Context, file_path: str, line: int, snippets: List[str], _format: Optional[str] = None
-) -> Any:
-    """Try multiple Lean code snippets at a line and get the goal state and diagnostics for each.
+@mcp.tool(
+    "lean_multi_attempt",
+    description="Evaluate multiple Lean snippets at a line and compare diagnostics/goals.",
+    annotations=TOOL_ANNOTATIONS["lean_multi_attempt"]
+)
+def multi_attempt(ctx: Context, params: LeanMultiAttemptInput) -> Any:
+    """Evaluate multiple Lean snippets at one location and compare outcomes.
 
-    Use to compare tactics or approaches.
-    Use rarely-prefer direct file edits to keep users involved.
-    For a single snippet, edit the file and run `lean_diagnostic_messages` instead.
+    Parameters
+    ----------
+    params : LeanMultiAttemptInput
+        Validated snippet specification.
+        - ``file_path`` (str): Absolute or project-relative Lean file path.
+        - ``line`` (int): 1-based line where each snippet is applied.
+        - ``snippets`` (List[str]): One or more tactic/code variants to test. Each
+          snippet is inserted as-is on the target line.
+        - ``response_format`` (Optional[str]): Formatting hint accepted for parity.
 
-    Note:
-        Only single-line, fully-indented snippets are supported.
-        Avoid comments for best results.
+    Returns
+    -------
+    MultiAttempt
+        ``structuredContent`` contains per-snippet diagnostics and goal payloads so
+        agents can contrast options. The textual summary lists how many diagnostics
+        fired for each snippet. Errors set ``isError=True`` when inputs are invalid.
 
-    Args:
-        file_path (str): Abs path to Lean file
-        line (int): Line number (1-indexed)
-        snippets (List[str]): List of snippets (3+ are recommended)
+    Use when
+    --------
+    - Comparing alternative tactic strategies before editing files.
+    - Investigating how slight snippet changes affect goals and diagnostics.
 
-    Returns:
-        List[str] | str: Diagnostics and goal states or error msg
+    Avoid when
+    ----------
+    - You only have a single snippet to test (use ``lean_run_code`` or direct edits).
+    - Snippets span multiple lines; the tool supports single-line inserts only.
+
+    Error handling
+    --------------
+    - Missing or empty snippet arrays return ``ERROR_BAD_REQUEST``.
+    - File resolution errors surface ``ERROR_INVALID_PATH`` with sanitized metadata.
     """
 
     started = time.perf_counter()
+    file_path = params.file_path
+    line = params.line
+    snippets = list(params.snippets)
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     if not snippets:
         return error_result(
             message="Provide at least one snippet to evaluate.",
@@ -1768,6 +2407,7 @@ def multi_attempt(
             ctx,
             file_path,
             started=started,
+            response_format=response_format,
             line=line,
             category="lean_multi_attempt",
         ) as file_session:
@@ -1876,20 +2516,49 @@ def multi_attempt(
         return exc.payload
 
 
-@mcp.tool("lean_run_code")
-def run_code(ctx: Context, code: str, _format: Optional[str] = None) -> Any:
-    """Run a complete, self-contained code snippet and return diagnostics.
+@mcp.tool(
+    "lean_run_code",
+    description="Execute an isolated Lean snippet with standalone diagnostics.",
+    annotations=TOOL_ANNOTATIONS["lean_run_code"]
+)
+def run_code(ctx: Context, params: LeanRunCodeInput) -> Any:
+    """Execute a self-contained Lean snippet in an isolated buffer.
 
-    Has to include all imports and definitions!
-    Only use for testing outside open files! Keep the user in the loop by editing files instead.
+    Parameters
+    ----------
+    params : LeanRunCodeInput
+        Validated snippet payload.
+        - ``code`` (str): Complete Lean program, including necessary imports.
+        - ``response_format`` (Optional[str]): Formatting hint accepted for parity.
 
-    Args:
-        code (str): Code snippet
+    Returns
+    -------
+    RunCode
+        ``structuredContent`` contains diagnostics emitted by Lean along with rendered
+        messages and severity summaries. The textual summary states whether the snippet
+        compiled successfully. Errors set ``isError=True`` with contextual metadata.
 
-    Returns:
-        List[str] | str: Diagnostics msgs or error msg
+    Use when
+    --------
+    - Testing small standalone snippets that should not touch on-disk files.
+    - Exploring language features without modifying the active project sources.
+
+    Avoid when
+    ----------
+    - You need to inspect results tied to existing files (use file-scoped tools).
+    - The snippet relies on project state (e.g. local definitions); prefer editing
+      files and running ``lean_diagnostic_messages`` instead.
+
+    Error handling
+    --------------
+    - Missing project roots raise ``ERROR_BAD_REQUEST`` with remediation steps.
+    - Lean compiler failures are returned as structured diagnostics, not exceptions.
     """
     started = time.perf_counter()
+    code = params.code
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     lean_project_path = ctx.request_context.lifespan_context.lean_project_path
     if lean_project_path is None:
         message = (
@@ -2069,46 +2738,127 @@ def run_code(ctx: Context, code: str, _format: Optional[str] = None) -> Any:
     )
 
 
-@mcp.tool("lean_tool_spec")
-def tool_spec(ctx: Context, _format: Optional[str] = None) -> Any:
-    started = time.perf_counter()
+def _render_tool_spec_payload() -> tuple[Dict[str, Any], str]:
     spec = build_tool_spec()
+    spec_json = json.dumps(spec, indent=2, ensure_ascii=False)
+    return spec, spec_json
+
+
+@mcp.tool(
+    "lean_tool_spec",
+    description="Publish structured metadata for all Lean MCP tools, including inputs, annotations, and rate limits.",
+    annotations=TOOL_ANNOTATIONS["lean_tool_spec"]
+)
+def tool_spec(ctx: Context, params: LeanToolSpecInput) -> Any:
+    """Return the published Lean MCP tool specification for evaluation harnesses.
+
+    Parameters
+    ----------
+    params : LeanToolSpecInput
+        Optional request metadata.
+        - ``response_format`` (Optional[str]): Legacy hint accepted for compatibility.
+
+    Returns
+    -------
+    ToolSpecSummary
+        ``structuredContent`` contains the result of
+        ``lean_lsp_mcp.tool_spec.build_tool_spec`` including version, tool definitions,
+        and response summaries. The human-readable content includes a short summary and
+        an attached JSON resource whose URI encodes the spec version for caching.
+        For direct module access use
+        ``lean_lsp_mcp.tool_spec.build_tool_spec`` inside the Python package.
+
+    Use when
+    --------
+    - Quickly listing available tools from an MCP client without calling ``listTools``.
+    - Feeding the spec into the mcp-builder evaluation harness as part of setup.
+
+    Avoid when
+    ----------
+    - You require the full JSON schema (call the module directly to stream the file).
+    - You only need high-level docs; check the README workflows instead.
+    """
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+    started = time.perf_counter()
+    spec, spec_json = _render_tool_spec_payload()
     summary = "Lean MCP tool specification ready."
-    tool_names = [t.get("name") for t in spec.get("tools", [])]
-    response_kinds = list((spec.get("responses") or {}).keys())
-    compact = {
-        "tools": tool_names,
-        "responses": response_kinds,
-    }
+    content_items = [
+        _text_item(summary),
+        _resource_item(TOOL_SPEC_RESOURCE_URI, spec_json, mime_type="application/json"),
+    ]
     return success_result(
         summary=summary,
-        structured=compact,
-        content=[_text_item(summary)],
+        structured=spec,
+        content=content_items,
         start_time=started,
         ctx=ctx,
     )
 
 
-@mcp.tool("lean_leansearch")
+# Register the tool-spec resource when FastMCP exposes a resource API (test stubs may not).
+def _tool_spec_resource_impl() -> str:
+    """Return the tool specification JSON payload."""
+    _, spec_json = _render_tool_spec_payload()
+    return spec_json
+
+_resource_reg = getattr(mcp, "resource", None)
+if callable(_resource_reg):  # pragma: no cover - exercised in real server runtime
+    _tool_spec_resource_impl = _resource_reg(
+        TOOL_SPEC_RESOURCE_URI,
+        title="Lean MCP Tool Specification",
+        description=(
+            "Structured metadata for all Lean MCP tools, including schemas and annotations."
+        ),
+        mime_type="application/json",
+    )(_tool_spec_resource_impl)
+
+
+@mcp.tool(
+    "lean_leansearch",
+    description="Query leansearch.net for Lean lemmas/theorems; responses list fully qualified names in `structured.names` (3 req/30s rate limit).",
+    annotations=TOOL_ANNOTATIONS["lean_leansearch"]
+)
 @rate_limited("leansearch", max_requests=3, per_seconds=30)
-def leansearch(ctx: Context, query: str, num_results: int = 5, _format: Optional[str] = None) -> Any:
-    """Search for Lean theorems, definitions, and tactics using leansearch.net.
+def leansearch(ctx: Context, params: LeanSearchInput) -> Any:
+    """Query leansearch.net for theorems, lemmas, and tactics relevant to a prompt.
 
-    Query patterns:
-      - Natural language: "If there exist injective maps of sets from A to B and from B to A, then there exists a bijective map between A and B."
-      - Mixed natural/Lean: "natural numbers. from: n < m, to: n + 1 < m + 1", "n + 1 <= m if n < m"
-      - Concept names: "Cauchy Schwarz"
-      - Lean identifiers: "List.sum", "Finset induction"
-      - Lean term: "{f : A → B} {g : B → A} (hf : Injective f) (hg : Injective g) : ∃ h, Bijective h"
+    Parameters
+    ----------
+    params : LeanSearchInput
+        Validated search parameters.
+        - ``query`` (str): Free-text, Lean syntax, or hybrid search string.
+        - ``num_results`` (int = 5): Maximum number of results to request (>=1).
+        - ``response_format`` (Optional[str]): Formatting hint, ignored by this tool.
 
-    Args:
-        query (str): Search query
-        num_results (int, optional): Max results. Defaults to 5.
+    Returns
+    -------
+    SearchResults
+        ``structuredContent`` lists matched entries with names, statements, relevance
+        scores, and URIs. The summary highlights how many matches were returned or if
+        none were found. Rate limits are enforced at 3 requests per 30 seconds.
 
-    Returns:
-        List[Dict] | str: Search results or error msg
+    Use when
+    --------
+    - You need candidate lemmas or theorems to apply in a Lean proof.
+    - Bootstrapping evaluation questions that require external theorem discovery.
+
+    Avoid when
+    ----------
+    - You must search local project files (use other file-centric tools).
+    - The query can be answered via Lean's standard library alone (hover/goal might be enough).
+
+    Error handling
+    --------------
+    - Empty responses return ``ERROR_BAD_REQUEST`` with guidance to refine the query.
+    - Network or parsing issues surface as ``ERROR_UNKNOWN`` including server messages.
     """
     started = time.perf_counter()
+    query = params.query
+    num_results = params.num_results
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
         headers = {"User-Agent": "lean-lsp-mcp/0.1", "Content-Type": "application/json"}
         payload = json.dumps(
@@ -2169,28 +2919,51 @@ def leansearch(ctx: Context, query: str, num_results: int = 5, _format: Optional
         )
 
 
-@mcp.tool("lean_loogle")
+@mcp.tool(
+    "lean_loogle",
+    description="Query loogle.lean-lang.org for Lean declarations by name/pattern; compact responses populate `structured.names` (3 req/30s).",
+    annotations=TOOL_ANNOTATIONS["lean_loogle"]
+)
 @rate_limited("loogle", max_requests=3, per_seconds=30)
-def loogle(ctx: Context, query: str, num_results: int = 8, _format: Optional[str] = None) -> Any:
-    """Search for definitions and theorems using loogle.
+def loogle(ctx: Context, params: LoogleSearchInput) -> Any:
+    """Search loogle.lean-lang.org for Lean lemmas by name, constants, or patterns.
 
-    Query patterns:
-      - By constant: Real.sin  # finds lemmas mentioning Real.sin
-      - By lemma name: "differ"  # finds lemmas with "differ" in the name
-      - By subexpression: _ * (_ ^ _)  # finds lemmas with a product and power
-      - Non-linear: Real.sqrt ?a * Real.sqrt ?a
-      - By type shape: (?a -> ?b) -> List ?a -> List ?b
-      - By conclusion: |- tsum _ = _ * tsum _
-      - By conclusion w/hyps: |- _ < _ → tsum _ < tsum _
+    Parameters
+    ----------
+    params : LoogleSearchInput
+        Validated search arguments.
+        - ``query`` (str): Raw loogle query supporting constants, patterns, and
+          conclusion matching.
+        - ``num_results`` (int = 8): Maximum number of hits to fetch.
+        - ``response_format`` (Optional[str]): Formatting hint; output schema is fixed.
 
-    Args:
-        query (str): Search query
-        num_results (int, optional): Max results. Defaults to 8.
+    Returns
+    -------
+    SearchResults
+        ``structuredContent`` contains matched lemma names, statements, and proof state
+        hints. The summary reports the number of hits and includes a quick preview.
+        Calls are rate-limited to 3 per 30 seconds.
 
-    Returns:
-        List[dict] | str: Search results or error msg
+    Use when
+    --------
+    - You recall part of a lemma name or constant and need the full theorem.
+    - Filtering results by expression patterns or conclusion shape.
+
+    Avoid when
+    ----------
+    - The query is purely natural language (``lean_leansearch`` handles fuzzy search).
+    - You need project-local lemmas not indexed by loogle.
+
+    Error handling
+    --------------
+    - Empty hits return ``ERROR_UNKNOWN`` with guidance to tighten or broaden queries.
+    - HTTP or parsing errors set ``ERROR_UNKNOWN`` with the upstream error text.
     """
     started = time.perf_counter()
+    query = params.query
+    num_results = params.num_results
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
     try:
         req = urllib.request.Request(
             f"https://loogle.lean-lang.org/json?q={urllib.parse.quote(query)}",
@@ -2244,30 +3017,72 @@ def loogle(ctx: Context, query: str, num_results: int = 8, _format: Optional[str
         )
 
 
-@mcp.tool("lean_state_search")
+@mcp.tool(
+    "lean_state_search",
+    description="Fetch goal-based lemma suggestions from premise-search.com (3 req/30s).",
+    annotations=TOOL_ANNOTATIONS["lean_state_search"]
+)
 @rate_limited("lean_state_search", max_requests=3, per_seconds=30)
-def state_search(
-    ctx: Context, file_path: str, line: int, column: int, num_results: int = 5, _format: Optional[str] = None
-) -> Any:
-    """Search for theorems based on proof state using premise-search.com.
+def state_search(ctx: Context, params: LeanStateSearchInput) -> Any:
+    """Query premise-search.com for lemmas relevant to the current goal state.
 
-    Only uses first goal if multiple.
+    Parameters
+    ----------
+    params : LeanStateSearchInput
+        Validated state-search request.
+        - ``file_path`` (str): Absolute or project-relative Lean file path.
+        - ``line`` (int): 1-based line containing the goal.
+        - ``column`` (int): 1-based column used to extract the goal (first goal only).
+        - ``num_results`` (int = 5): Maximum suggestions to return.
+        - ``response_format`` (Optional[str]): Formatting hint; output schema is fixed.
 
-    Args:
-        file_path (str): Abs path to Lean file
-        line (int): Line number (1-indexed)
-        column (int): Column number (1-indexed)
-        num_results (int, optional): Max results. Defaults to 5.
+    Environment Variables
+    ---------------------
+    - ``LEAN_STATE_SEARCH_URL`` (Optional[str]): Base URL for premise-search API.
+      Defaults to "https://premise-search.com". For production use, consider
+      self-hosting: https://github.com/ruc-ai4math/LeanStateSearch
+      Example: ``LEAN_STATE_SEARCH_URL=http://localhost:3000``
+    - ``LEAN_STATE_SEARCH_REV`` (Optional[str]): Mathlib revision to query against.
+      Defaults to "v4.16.0". The public instance may have limited revision support.
+      Self-hosted instances can index any revision.
+      Example: ``LEAN_STATE_SEARCH_REV=v4.18.0``
 
-    Returns:
-        List | str: Search results or error msg
+    Returns
+    -------
+    SearchResults
+        ``structuredContent`` includes candidate lemmas with names and statements
+        ranked by relevance. The summary reports how many suggestions were produced.
+        Tool calls are rate-limited to 3 per 30 seconds.
+
+    Use when
+    --------
+    - You have an active goal and want external guidance on which lemmas to try.
+    - Generating evaluation tasks that require multi-hop reasoning with external hints.
+
+    Avoid when
+    ----------
+    - You need keyword search over lemma names (use ``lean_loogle`` or ``lean_leansearch``).
+    - The file has compilation errors preventing Lean from computing goals.
+
+    Error handling
+    --------------
+    - Missing goals return ``ERROR_NO_GOAL`` with the inspected position.
+    - External service failures surface as ``ERROR_UNKNOWN`` with upstream detail.
     """
     started = time.perf_counter()
+    file_path = params.file_path
+    line = params.line
+    column = params.column
+    num_results = params.num_results
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
         with open_file_session(
             ctx,
             file_path,
             started=started,
+            response_format=response_format,
             line=line,
             column=column,
             category="lean_state_search",
@@ -2280,6 +3095,7 @@ def state_search(
     except ToolError as exc:
         return exc.payload
 
+    f_line = format_line(file_contents, line, column)
     if not goal_state or not goal_state.get("goals"):
         return error_result(
             message="No goals found",
@@ -2294,20 +3110,30 @@ def state_search(
             ctx=ctx,
         )
 
-    data = {
-        "state": goal_state["goals"][0],
-        "limit": num_results,
-        "query": f_line,
-    }
+    # premise-search.com API changed to GET with query parameters
+    # Default to v4.16.0 but allow override via environment variable
+    # Note: Public instance may have limited revision support; self-hosting recommended
+    mathlib_rev = os.getenv("LEAN_STATE_SEARCH_REV", "v4.16.0")
+    goal_text = goal_state["goals"][0]
+
+    # Check for custom URL (self-hosted instance)
+    base_url = os.getenv("LEAN_STATE_SEARCH_URL", "https://premise-search.com")
+    if not base_url.startswith("http"):
+        base_url = f"https://{base_url}"
+    base_url = base_url.rstrip("/")
 
     try:
-        headers = {"User-Agent": "lean-lsp-mcp/0.1", "Content-Type": "application/json"}
-        req = urllib.request.Request(
-            "https://premise-search.com/api/search",
-            headers=headers,
-            method="POST",
-            data=json.dumps(data).encode("utf-8"),
+        # Encode goal state for URL
+        query_encoded = urllib.parse.quote(goal_text)
+        url = (
+            f"{base_url}/api/search"
+            f"?query={query_encoded}"
+            f"&results={num_results}"
+            f"&rev={mathlib_rev}"
         )
+
+        headers = {"User-Agent": "lean-lsp-mcp/0.1"}
+        req = urllib.request.Request(url, headers=headers, method="GET")
 
         with urllib.request.urlopen(req, timeout=20) as response:
             results = json.loads(response.read().decode("utf-8"))
@@ -2334,13 +3160,88 @@ def state_search(
                 "path": identity["relative_path"],
             },
             "pos": _compact_pos(line=line, column=column),
-            "query": {"state": data["state"], "limit": num_results},
+            "query": {
+                "state": goal_text,
+                "limit": num_results,
+                "lineSnippet": f_line,
+                "rev": mathlib_rev,
+            },
             "names": names,
         }
         summary = f"{len(results)} results"
         return success_result(
             summary=summary,
             structured=structured,
+            start_time=started,
+            ctx=ctx,
+        )
+    except urllib.error.HTTPError as e:
+        # Handle specific HTTP errors with actionable guidance
+        if e.code == 405:
+            return error_result(
+                message="premise-search.com API method not allowed",
+                code=ERROR_UNKNOWN,
+                category="lean_state_search",
+                details={
+                    "error": "The API may have changed. Please report this issue.",
+                    "http_code": 405,
+                    "file": identity["relative_path"],
+                },
+                hints=[
+                    "The premise-search.com API interface may have been updated.",
+                    "Check https://premise-search.com for current API documentation.",
+                    "Consider using a self-hosted instance via LEAN_STATE_SEARCH_URL."
+                ],
+                start_time=started,
+                ctx=ctx,
+            )
+        elif e.code == 400:
+            # Try to parse error message from API
+            try:
+                error_data = json.loads(e.read().decode("utf-8"))
+                error_msg = error_data.get("error", str(e))
+            except:
+                error_msg = str(e)
+            
+            # Check if it's a revision issue
+            is_revision_error = "revision" in error_msg.lower()
+            
+            return error_result(
+                message=f"Premise search API error: {error_msg}",
+                code=ERROR_BAD_REQUEST,
+                category="lean_state_search",
+                details={
+                    "error": error_msg,
+                    "http_code": 400,
+                    "file": identity["relative_path"],
+                    "rev": mathlib_rev,
+                    "url": base_url,
+                },
+                hints=[
+                    f"The Mathlib revision '{mathlib_rev}' may not be available on {base_url}.",
+                    "The public premise-search.com instance may have limited revision support.",
+                    "Recommended: Self-host for production use: https://github.com/ruc-ai4math/LeanStateSearch",
+                    "Set LEAN_STATE_SEARCH_URL to your self-hosted instance URL.",
+                    "Alternative: Use lean_leansearch or lean_loogle for theorem search.",
+                ] if is_revision_error else [
+                    "Check that your goal state is properly formatted.",
+                    "Ensure the query parameter contains valid Lean syntax.",
+                    f"API endpoint: {base_url}/api/search"
+                ],
+                start_time=started,
+                ctx=ctx,
+            )
+        return error_result(
+            message=f"premise-search.com HTTP error {e.code}",
+            code=ERROR_UNKNOWN,
+            category="lean_state_search",
+            details={
+                "error": str(e),
+                "http_code": e.code,
+                "line": line,
+                "column": column,
+                "file": identity["relative_path"],
+            },
             start_time=started,
             ctx=ctx,
         )
@@ -2360,28 +3261,61 @@ def state_search(
         )
 
 
-@mcp.tool("lean_hammer_premise")
+@mcp.tool(
+    "lean_hammer_premise",
+    description="Retrieve hammer premise suggestions for the active goal (3 req/30s).",
+    annotations=TOOL_ANNOTATIONS["lean_hammer_premise"]
+)
 @rate_limited("hammer_premise", max_requests=3, per_seconds=30)
-def hammer_premise(
-    ctx: Context, file_path: str, line: int, column: int, num_results: int = 32, _format: Optional[str] = None
-) -> Any:
-    """Search for premises based on proof state using the lean hammer premise search.
+def hammer_premise(ctx: Context, params: LeanHammerPremiseInput) -> Any:
+    """Retrieve supporting premises from a Lean hammer server for the current goal.
 
-    Args:
-        file_path (str): Abs path to Lean file
-        line (int): Line number (1-indexed)
-        column (int): Column number (1-indexed)
-        num_results (int, optional): Max results. Defaults to 32.
+    Parameters
+    ----------
+    params : LeanHammerPremiseInput
+        Validated hammer query.
+        - ``file_path`` (str): Absolute or project-relative Lean file path.
+        - ``line`` (int): 1-based line containing the goal.
+        - ``column`` (int): 1-based column to anchor the goal extraction.
+        - ``num_results`` (int = 32): Maximum number of premises to request.
+        - ``response_format`` (Optional[str]): Formatting hint; output schema is fixed.
 
-    Returns:
-        List[str] | str: List of relevant premises or error message
+    Returns
+    -------
+    SearchResults
+        ``structuredContent`` lists premise candidates with scores and references to
+        the Lean library. Summaries indicate how many premises were returned. Rate
+        limits enforce 3 requests per 30 seconds.
+
+    Use when
+    --------
+    - You need a curated list of premises to guide a proof search or automation step.
+    - Designing evaluation tasks that require combining multiple helper results.
+
+    Avoid when
+    ----------
+    - No goal is available at the cursor (run ``lean_goal`` first).
+    - The hammer backend is unavailable; prefer ``lean_state_search`` as fallback.
+
+    Error handling
+    --------------
+    - Missing goals return ``ERROR_NO_GOAL`` with file/line context.
+    - HTTP or parsing issues surface as ``ERROR_UNKNOWN`` with upstream details.
     """
     started = time.perf_counter()
+    file_path = params.file_path
+    line = params.line
+    column = params.column
+    num_results = params.num_results
+    response_format = params.response_format
+    _set_response_format_hint(ctx, response_format)
+
     try:
         with open_file_session(
             ctx,
             file_path,
             started=started,
+            response_format=response_format,
             line=line,
             column=column,
             category="lean_hammer_premise",

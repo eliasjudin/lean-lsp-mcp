@@ -10,15 +10,15 @@ from conftest import load_from_src
 utils = load_from_src("lean_lsp_mcp.utils")
 
 
-def test_normalize_range_preserves_zero_based_positions():
+def test_normalize_range_converts_to_one_based_positions():
     original = {
         "start": {"line": 0, "character": 4},
         "end": {"line": 1, "character": 0},
     }
     normalized = utils.normalize_range(original)
     assert normalized == {
-        "start": {"line": 0, "character": 4},
-        "end": {"line": 1, "character": 0},
+        "start": {"line": 1, "character": 5},
+        "end": {"line": 2, "character": 1},
     }
 
 
@@ -38,7 +38,7 @@ def test_diagnostics_to_entries_handles_basic_fields():
     assert entries[0]["message"] == "oops"
     assert entries[0]["severity"] == "warning"
     assert entries[0]["severityCode"] == 2
-    assert entries[0]["range"]["start"] == {"line": 0, "character": 0}
+    assert entries[0]["range"]["start"] == {"line": 1, "character": 1}
 
 
 def test_summarize_diagnostics_counts_by_severity():

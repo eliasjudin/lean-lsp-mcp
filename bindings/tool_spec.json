@@ -1,344 +1,16 @@
 {
-  "version": "2025-10-02",
-  "tools": [
-    {
-      "name": "lean_build",
-      "description": "Build the Lean project and restart the LSP server.",
-      "inputs": [
-        {
-          "name": "lean_project_path",
-          "type": "string",
-          "required": false
-        },
-        {
-          "name": "clean",
-          "type": "boolean",
-          "required": false,
-          "default": false
-        }
-      ],
-      "response": "LeanBuildResult"
-    },
-    {
-      "name": "lean_file_contents",
-      "description": "Get the content of a Lean file.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "annotate_lines",
-          "type": "boolean",
-          "required": false,
-          "default": true
-        },
-        {
-          "name": "start_line",
-          "type": "integer",
-          "required": false
-        },
-        {
-          "name": "line_count",
-          "type": "integer",
-          "required": false
-        }
-      ],
-      "response": "FileContents"
-    },
-    {
-      "name": "lean_diagnostic_messages",
-      "description": "Fetch diagnostics for a Lean file.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "start_line",
-          "type": "integer",
-          "required": false
-        },
-        {
-          "name": "line_count",
-          "type": "integer",
-          "required": false
-        }
-      ],
-      "response": "Diagnostics"
-    },
-    {
-      "name": "lean_goal",
-      "description": "Return the goals at a given location.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "line",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "column",
-          "type": "integer",
-          "required": false
-        }
-      ],
-      "response": "Goal"
-    },
-    {
-      "name": "lean_term_goal",
-      "description": "Return the expected term type at a location.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "line",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "column",
-          "type": "integer",
-          "required": false
-        }
-      ],
-      "response": "Goal"
-    },
-    {
-      "name": "lean_hover_info",
-      "description": "Return hover info for a position.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "line",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "column",
-          "type": "integer",
-          "required": true
-        }
-      ],
-      "response": "Hover"
-    },
-    {
-      "name": "lean_completions",
-      "description": "Return completion suggestions at a position.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "line",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "column",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "max_completions",
-          "type": "integer",
-          "required": false,
-          "default": 32
-        }
-      ],
-      "response": "Completions"
-    },
-    {
-      "name": "lean_declaration_file",
-      "description": "Return the declaration file for a symbol.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "symbol",
-          "type": "string",
-          "required": true
-        }
-      ],
-      "response": "Declaration"
-    },
-    {
-      "name": "lean_multi_attempt",
-      "description": "Apply multiple snippets at a line and compare results.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "line",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "snippets",
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "required": true
-        }
-      ],
-      "response": "MultiAttempt"
-    },
-    {
-      "name": "lean_run_code",
-      "description": "Run an isolated Lean snippet and report diagnostics.",
-      "inputs": [
-        {
-          "name": "code",
-          "type": "string",
-          "required": true
-        }
-      ],
-      "response": "RunCode"
-    },
-    {
-      "name": "lean_leansearch",
-      "description": "Search Lean theorems via leansearch.net.",
-      "inputs": [
-        {
-          "name": "query",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "num_results",
-          "type": "integer",
-          "required": false,
-          "default": 5
-        }
-      ],
-      "response": "SearchResults",
-      "rate_limit": {
-        "category": "leansearch",
-        "max": 3,
-        "window_seconds": 30
-      }
-    },
-    {
-      "name": "lean_loogle",
-      "description": "Search definitions and theorems via loogle.",
-      "inputs": [
-        {
-          "name": "query",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "num_results",
-          "type": "integer",
-          "required": false,
-          "default": 8
-        }
-      ],
-      "response": "SearchResults",
-      "rate_limit": {
-        "category": "loogle",
-        "max": 3,
-        "window_seconds": 30
-      }
-    },
-    {
-      "name": "lean_state_search",
-      "description": "Goal-directed search using premise-search.com.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "line",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "column",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "num_results",
-          "type": "integer",
-          "required": false,
-          "default": 5
-        }
-      ],
-      "response": "SearchResults",
-      "rate_limit": {
-        "category": "lean_state_search",
-        "max": 3,
-        "window_seconds": 30
-      }
-    },
-    {
-      "name": "lean_hammer_premise",
-      "description": "Fetch premises via the Lean hammer service.",
-      "inputs": [
-        {
-          "name": "file_path",
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "line",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "column",
-          "type": "integer",
-          "required": true
-        },
-        {
-          "name": "num_results",
-          "type": "integer",
-          "required": false,
-          "default": 32
-        }
-      ],
-      "response": "SearchResults",
-      "rate_limit": {
-        "category": "hammer_premise",
-        "max": 3,
-        "window_seconds": 30
-      }
-    }
-  ],
   "responses": {
-    "LeanBuildResult": {
-      "description": "Build output and project path."
+    "Completions": {
+      "description": "Completion suggestions."
     },
-    "FileContents": {
-      "description": "File contents with optional line annotations."
+    "Declaration": {
+      "description": "Declaration text for a symbol."
     },
     "Diagnostics": {
       "description": "Diagnostics emitted by the Lean LSP."
+    },
+    "FileContents": {
+      "description": "File contents with optional line annotations."
     },
     "Goal": {
       "description": "Goal state at a location."
@@ -346,11 +18,8 @@
     "Hover": {
       "description": "Hover information for a symbol."
     },
-    "Completions": {
-      "description": "Completion suggestions."
-    },
-    "Declaration": {
-      "description": "Declaration text for a symbol."
+    "LeanBuildResult": {
+      "description": "Build output and project path."
     },
     "MultiAttempt": {
       "description": "Diagnostics and goals per snippet."
@@ -360,6 +29,1484 @@
     },
     "SearchResults": {
       "description": "Results from external search services."
+    },
+    "ToolSpecSummary": {
+      "description": "Lean MCP tool specification payload."
     }
-  }
+  },
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Rebuild Lean Project"
+      },
+      "description": "Run `lake build` (optionally `lake clean`) to refresh the Lean project and restart the cached Lean LSP client.",
+      "inputModel": "LeanBuildInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "clean": {
+            "default": false,
+            "description": "Whether to run `lake clean` before rebuilding the project.",
+            "title": "Clean",
+            "type": "boolean"
+          },
+          "lean_project_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Absolute path to the Lean project root; inferred when omitted.",
+            "title": "Lean Project Path"
+          }
+        },
+        "title": "LeanBuildInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Absolute path to the Lean project root; inferred when omitted.",
+          "name": "lean_project_path",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "default": false,
+          "description": "Whether to run `lake clean` before rebuilding the project.",
+          "name": "clean",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "name": "lean_build",
+      "response": "LeanBuildResult"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Read Lean File"
+      },
+      "description": "Read Lean source text with optional 1-indexed annotations; `structured.lines` preserves numbering for downstream agents.",
+      "inputModel": "LeanFileContentsInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "annotate_lines": {
+            "default": true,
+            "description": "Annotate each returned line with its 1-based line number.",
+            "title": "Annotate Lines",
+            "type": "boolean"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line_count": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Number of lines to return from `start_line`.",
+            "title": "Line Count"
+          },
+          "start_line": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "1-based line number to start reading from.",
+            "title": "Start Line"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "title": "LeanFileContentsInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": true,
+          "description": "Annotate each returned line with its 1-based line number.",
+          "name": "annotate_lines",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "1-based line number to start reading from.",
+          "name": "start_line",
+          "required": false,
+          "type": "integer | null"
+        },
+        {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of lines to return from `start_line`.",
+          "name": "line_count",
+          "required": false,
+          "type": "integer | null"
+        }
+      ],
+      "name": "lean_file_contents",
+      "response": "FileContents"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "List Lean Diagnostics"
+      },
+      "description": "List Lean diagnostics for a file window; `structured.summary.count` reports totals and `structured.diags` encode zero-based ranges for tooling.",
+      "inputModel": "LeanDiagnosticMessagesInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line_count": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Number of lines to scan for diagnostics from `start_line`.",
+            "title": "Line Count"
+          },
+          "start_line": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "1-based line number to start collecting diagnostics from.",
+            "title": "Start Line"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "title": "LeanDiagnosticMessagesInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "1-based line number to start collecting diagnostics from.",
+          "name": "start_line",
+          "required": false,
+          "type": "integer | null"
+        },
+        {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of lines to scan for diagnostics from `start_line`.",
+          "name": "line_count",
+          "required": false,
+          "type": "integer | null"
+        }
+      ],
+      "name": "lean_diagnostic_messages",
+      "response": "Diagnostics"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Inspect Lean Goals"
+      },
+      "description": "Inspect Lean proof goals at a 1-indexed file position; omitting the column probes line boundaries and returns compact `goals` entries with first-line previews.",
+      "inputModel": "LeanGoalInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "column": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "1-based column within the line; omit to auto-detect goal.",
+            "title": "Column"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based line number within the Lean source file.",
+            "minimum": 1,
+            "title": "Line",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path",
+          "line"
+        ],
+        "title": "LeanGoalInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "1-based line number within the Lean source file.",
+          "minimum": 1,
+          "name": "line",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "1-based column within the line; omit to auto-detect goal.",
+          "name": "column",
+          "required": false,
+          "type": "integer | null"
+        }
+      ],
+      "name": "lean_goal",
+      "response": "Goal"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Inspect Expected Term Type"
+      },
+      "description": "Inspect the expected Lean term type at a 1-indexed location and expose the cleaned `rendered` snippet alongside normalized coordinates.",
+      "inputModel": "LeanTermGoalInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "description": "Input for `lean_term_goal`; inherits goal position semantics.",
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "column": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "1-based column within the line; omit to auto-detect goal.",
+            "title": "Column"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based line number within the Lean source file.",
+            "minimum": 1,
+            "title": "Line",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path",
+          "line"
+        ],
+        "title": "LeanTermGoalInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "1-based line number within the Lean source file.",
+          "minimum": 1,
+          "name": "line",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "1-based column within the line; omit to auto-detect goal.",
+          "name": "column",
+          "required": false,
+          "type": "integer | null"
+        }
+      ],
+      "name": "lean_term_goal",
+      "response": "Goal"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Inspect Hover Info"
+      },
+      "description": "Retrieve Lean hover documentation for the symbol under the cursor together with `structured.infoSnippet` and nearby diagnostics.",
+      "inputModel": "LeanHoverInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "column": {
+            "description": "1-based column to inspect for hover information.",
+            "minimum": 1,
+            "title": "Column",
+            "type": "integer"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based line number within the Lean source file.",
+            "minimum": 1,
+            "title": "Line",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path",
+          "line",
+          "column"
+        ],
+        "title": "LeanHoverInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "1-based line number within the Lean source file.",
+          "minimum": 1,
+          "name": "line",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "1-based column to inspect for hover information.",
+          "minimum": 1,
+          "name": "column",
+          "required": true,
+          "type": "integer"
+        }
+      ],
+      "name": "lean_hover_info",
+      "response": "Hover"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Request Completions"
+      },
+      "description": "Request Lean completion suggestions at a file position.",
+      "inputModel": "LeanCompletionsInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "column": {
+            "description": "1-based column where completions are requested.",
+            "minimum": 1,
+            "title": "Column",
+            "type": "integer"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based line number within the Lean source file.",
+            "minimum": 1,
+            "title": "Line",
+            "type": "integer"
+          },
+          "max_completions": {
+            "default": 32,
+            "description": "Maximum number of completion items to include in the response.",
+            "minimum": 1,
+            "title": "Max Completions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path",
+          "line",
+          "column"
+        ],
+        "title": "LeanCompletionsInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "1-based line number within the Lean source file.",
+          "minimum": 1,
+          "name": "line",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "1-based column where completions are requested.",
+          "minimum": 1,
+          "name": "column",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "default": 32,
+          "description": "Maximum number of completion items to include in the response.",
+          "minimum": 1,
+          "name": "max_completions",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "name": "lean_completions",
+      "response": "Completions"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Open Declaration File"
+      },
+      "description": "Open the Lean source file that defines a given declaration and surface declaration path metadata for navigation.",
+      "inputModel": "LeanDeclarationFileInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "symbol": {
+            "description": "Name of the symbol to locate within the file.",
+            "minLength": 1,
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path",
+          "symbol"
+        ],
+        "title": "LeanDeclarationFileInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "Name of the symbol to locate within the file.",
+          "minLength": 1,
+          "name": "symbol",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "name": "lean_declaration_file",
+      "response": "Declaration"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Compare Snippet Attempts"
+      },
+      "description": "Evaluate multiple Lean snippets at a line and compare diagnostics/goals.",
+      "inputModel": "LeanMultiAttemptInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based line number within the Lean source file.",
+            "minimum": 1,
+            "title": "Line",
+            "type": "integer"
+          },
+          "snippets": {
+            "description": "One or more Lean code snippets to try at the target line.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Snippets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "file_path",
+          "line",
+          "snippets"
+        ],
+        "title": "LeanMultiAttemptInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "1-based line number within the Lean source file.",
+          "minimum": 1,
+          "name": "line",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "One or more Lean code snippets to try at the target line.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "name": "snippets",
+          "required": true,
+          "type": "array"
+        }
+      ],
+      "name": "lean_multi_attempt",
+      "response": "MultiAttempt"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Run Isolated Snippet"
+      },
+      "description": "Execute an isolated Lean snippet with standalone diagnostics.",
+      "inputModel": "LeanRunCodeInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "code": {
+            "description": "Complete Lean snippet to execute in an isolated buffer.",
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "LeanRunCodeInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Complete Lean snippet to execute in an isolated buffer.",
+          "minLength": 1,
+          "name": "code",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "name": "lean_run_code",
+      "response": "RunCode"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Export Tool Specification"
+      },
+      "description": "Publish structured metadata for all Lean MCP tools, including inputs, annotations, and rate limits.",
+      "inputModel": "LeanToolSpecInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "description": "Input for `lean_tool_spec`; accepts optional formatting hints only.",
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          }
+        },
+        "title": "LeanToolSpecInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        }
+      ],
+      "name": "lean_tool_spec",
+      "response": "ToolSpecSummary"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Search leansearch.net"
+      },
+      "description": "Query leansearch.net for Lean lemmas/theorems; responses list fully qualified names in `structured.names` (3 req/30s rate limit).",
+      "inputModel": "LeanSearchInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "num_results": {
+            "default": 5,
+            "description": "Maximum number of results to fetch from the service.",
+            "minimum": 1,
+            "title": "Num Results",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Search query passed to leansearch.net.",
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "LeanSearchInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Search query passed to leansearch.net.",
+          "minLength": 1,
+          "name": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": 5,
+          "description": "Maximum number of results to fetch from the service.",
+          "minimum": 1,
+          "name": "num_results",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "name": "lean_leansearch",
+      "rate_limit": {
+        "category": "leansearch",
+        "max": 3,
+        "window_seconds": 30
+      },
+      "response": "SearchResults"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Search Loogle"
+      },
+      "description": "Query loogle.lean-lang.org for Lean declarations by name/pattern; compact responses populate `structured.names` (3 req/30s).",
+      "inputModel": "LoogleSearchInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "num_results": {
+            "default": 8,
+            "description": "Maximum number of results to include in the response.",
+            "minimum": 1,
+            "title": "Num Results",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Search query sent to loogle.lean-lang.org.",
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "LoogleSearchInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Search query sent to loogle.lean-lang.org.",
+          "minLength": 1,
+          "name": "query",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": 8,
+          "description": "Maximum number of results to include in the response.",
+          "minimum": 1,
+          "name": "num_results",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "name": "lean_loogle",
+      "rate_limit": {
+        "category": "loogle",
+        "max": 3,
+        "window_seconds": 30
+      },
+      "response": "SearchResults"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Goal-Based Lemma Search"
+      },
+      "description": "Fetch goal-based lemma suggestions from premise-search.com (3 req/30s).",
+      "inputModel": "LeanStateSearchInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "column": {
+            "description": "1-based column within the line to query for goals.",
+            "minimum": 1,
+            "title": "Column",
+            "type": "integer"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based line number within the Lean source file.",
+            "minimum": 1,
+            "title": "Line",
+            "type": "integer"
+          },
+          "num_results": {
+            "default": 5,
+            "description": "Maximum number of matching suggestions to return.",
+            "minimum": 1,
+            "title": "Num Results",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path",
+          "line",
+          "column"
+        ],
+        "title": "LeanStateSearchInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "1-based line number within the Lean source file.",
+          "minimum": 1,
+          "name": "line",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "1-based column within the line to query for goals.",
+          "minimum": 1,
+          "name": "column",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "default": 5,
+          "description": "Maximum number of matching suggestions to return.",
+          "minimum": 1,
+          "name": "num_results",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "name": "lean_state_search",
+      "rate_limit": {
+        "category": "lean_state_search",
+        "max": 3,
+        "window_seconds": 30
+      },
+      "response": "SearchResults"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Fetch Hammer Premises"
+      },
+      "description": "Retrieve hammer premise suggestions for the active goal (3 req/30s).",
+      "inputModel": "LeanHammerPremiseInput",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional response rendering hint (legacy key `_format`).",
+            "title": "Format"
+          },
+          "column": {
+            "description": "1-based column within the line to query for goals.",
+            "minimum": 1,
+            "title": "Column",
+            "type": "integer"
+          },
+          "file_path": {
+            "description": "Absolute or project-relative path to a Lean source file.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based line number within the Lean source file.",
+            "minimum": 1,
+            "title": "Line",
+            "type": "integer"
+          },
+          "num_results": {
+            "default": 32,
+            "description": "Maximum number of premises to retrieve from the hammer.",
+            "minimum": 1,
+            "title": "Num Results",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path",
+          "line",
+          "column"
+        ],
+        "title": "LeanHammerPremiseInput",
+        "type": "object"
+      },
+      "inputs": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional response rendering hint (legacy key `_format`).",
+          "field": "response_format",
+          "name": "_format",
+          "required": false,
+          "type": "string | null"
+        },
+        {
+          "description": "Absolute or project-relative path to a Lean source file.",
+          "name": "file_path",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "description": "1-based line number within the Lean source file.",
+          "minimum": 1,
+          "name": "line",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "description": "1-based column within the line to query for goals.",
+          "minimum": 1,
+          "name": "column",
+          "required": true,
+          "type": "integer"
+        },
+        {
+          "default": 32,
+          "description": "Maximum number of premises to retrieve from the hammer.",
+          "minimum": 1,
+          "name": "num_results",
+          "required": false,
+          "type": "integer"
+        }
+      ],
+      "name": "lean_hammer_premise",
+      "rate_limit": {
+        "category": "hammer_premise",
+        "max": 3,
+        "window_seconds": 30
+      },
+      "response": "SearchResults"
+    }
+  ],
+  "version": "2025-10-20.1"
 }

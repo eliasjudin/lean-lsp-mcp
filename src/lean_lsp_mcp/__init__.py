@@ -1,16 +1,19 @@
 import argparse
 
-from lean_lsp_mcp.server import mcp
-
 
 def main():
-    parser = argparse.ArgumentParser(description="Lean LSP MCP Server")
+    from lean_lsp_mcp.server import mcp
+
+    parser = argparse.ArgumentParser(description="lean_lsp_mcp server")
     parser.add_argument(
         "--transport",
         type=str,
-        choices=["stdio", "streamable-http", "sse"],
+        choices=["stdio", "sse", "http", "streamable-http", "streamable_http"],
         default="stdio",
-        help="Transport method for the server. Default is 'stdio'.",
+        help=(
+            "Transport method for the server. Accepts 'stdio', 'sse', 'http', "
+            "or 'streamable-http' (with 'streamable_http' alias). Default is 'stdio'."
+        ),
     )
     parser.add_argument(
         "--host",
@@ -27,4 +30,10 @@ def main():
     args = parser.parse_args()
     mcp.settings.host = args.host
     mcp.settings.port = args.port
-    mcp.run(transport=args.transport)
+
+    # Normalize transport aliases for FastMCP
+    transport = args.transport
+    if transport in {"http", "streamable_http"}:
+        transport = "streamable-http"
+
+    mcp.run(transport=transport)

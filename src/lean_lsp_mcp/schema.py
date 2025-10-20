@@ -13,7 +13,6 @@ def mcp_result(
     content: Iterable[ContentItem],
     structured: StructuredContent | None = None,
     is_error: bool = False,
-    meta: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a CallToolResult-compatible payload.
 
@@ -27,9 +26,6 @@ def mcp_result(
     is_error:
         Whether the tool execution failed. When ``True`` callers should include a
         descriptive human message as the first content item.
-    meta:
-        Optional metadata exposed via ``_meta`` for clients that rely on request
-        identifiers or timing information.
     """
 
     content_list = list(content)
@@ -43,8 +39,6 @@ def mcp_result(
 
     if structured is not None:
         result["structuredContent"] = dict(structured)
-    if meta:
-        result["_meta"] = dict(meta)
 
     return result
 
