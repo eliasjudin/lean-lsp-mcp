@@ -1,0 +1,26 @@
+name: MCP Evaluations
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  run:
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project and evaluation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+          pip install -r mcp-builder/scripts/requirements.txt
+      - name: Run MCP evaluations
+        run: scripts/run_mcp_evaluations.sh
