@@ -16,7 +16,7 @@
   </a>
 </p>
 
-MCP server that allows agentic interaction with the [Lean theorem prover](https://lean-lang.org/) via the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) using [leanclient](https://github.com/oOo0oOo/leanclient). This server provides a range of tools for LLM agents to understand, analyze and interact with Lean projects.
+`lean_lsp_mcp` is an MCP server that enables agentic interaction with the [Lean theorem prover](https://lean-lang.org/) via the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) using [leanclient](https://github.com/oOo0oOo/leanclient). This server provides a range of tools for LLM agents to understand, analyze and interact with Lean projects.
 
 **Currently beta testing**: Please help us by submitting bug reports and feature requests!
 
@@ -62,20 +62,20 @@ VSCode and VSCode Insiders are supporting MCPs in [agent mode](https://code.visu
 
 1. One-click config setup:
 
-[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=lean-lsp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22lean-lsp-mcp%22%5D%7D)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=lean_lsp_mcp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22lean-lsp-mcp%22%5D%7D)
 
-[![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=lean-lsp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22lean-lsp-mcp%22%5D%7D&quality=insiders)
+[![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=lean_lsp_mcp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22lean-lsp-mcp%22%5D%7D&quality=insiders)
 
 OR using the setup wizard:
 
-Ctrl+Shift+P > "MCP: Add Server..." > "Command (stdio)" > "uvx lean-lsp-mcp" > "lean-lsp" (or any name you like) > Global or Workspace
+Ctrl+Shift+P > "MCP: Add Server..." > "Command (stdio)" > "uvx lean-lsp-mcp" > "lean_lsp_mcp" (or any name you like) > Global or Workspace
 
 OR manually add config to `mcp.json`:
 
 ```jsonc
 {
     "servers": {
-        "lean-lsp": {
+        "lean_lsp_mcp": {
             "type": "stdio",
             "command": "uvx",
             "args": [
@@ -99,7 +99,7 @@ OR manually add config to `mcp.json`:
 ```jsonc
 {
     "mcpServers": {
-        "lean-lsp": {
+        "lean_lsp_mcp": {
             "command": "uvx",
             "args": ["lean-lsp-mcp"]
         }
@@ -113,13 +113,13 @@ Run one of these commands in the root directory of your Lean project (where `lak
 
 ```bash
 # Local-scoped MCP server
-claude mcp add lean-lsp uvx lean-lsp-mcp
+claude mcp add lean_lsp_mcp uvx lean-lsp-mcp
 
 # OR project-scoped MCP server (creates or updates a .mcp.json file in the current directory)
-claude mcp add lean-lsp -s project uvx lean-lsp-mcp
+claude mcp add lean_lsp_mcp -s project uvx lean-lsp-mcp
 
 # OR If you run into issues with the project path (e.g. the language server directory cannot be found), you can also set it manually e.g.
-claude mcp add lean-lsp uvx lean-lsp-mcp -e LEAN_PROJECT_PATH=$PWD
+claude mcp add lean_lsp_mcp uvx lean-lsp-mcp -e LEAN_PROJECT_PATH=$PWD
 ```
 
 You can find more details about MCP server configuration for Claude Code [here](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/tutorials#configure-mcp-servers).
@@ -128,20 +128,22 @@ You can find more details about MCP server configuration for Claude Code [here](
 
 Other setups, such as [Claude Desktop](https://modelcontextprotocol.io/quickstart/user), [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/mcp/), [Windsurf](https://docs.windsurf.com/windsurf/cascade/mcp) or [Goose](https://block.github.io/goose/docs/getting-started/using-extensions) should work with similar configs.
 
-### Transport Methods
+### Supported Transports
 
-The Lean LSP MCP server supports the following transport methods:
+`lean_lsp_mcp` follows the MCP transport guidance for FastMCP servers. Choose the transport that matches your deployment:
 
-- `stdio`: Standard input/output (default)
-- `streamable-http`: HTTP streaming
-- `sse`: Server-sent events (MCP legacy, use `streamable-http` if possible)
+| CLI value | Transport | Recommended usage | Notes |
+| --- | --- | --- | --- |
+| `stdio` | Stdio (default) | Local development, CLI integrations, single-user workflows | No network configuration required. Use stderr for logs to avoid interfering with the protocol. |
+| `streamable-http` | HTTP streaming | Remote access, multi-client scenarios, cloud hosting | Exposes an HTTP endpoint at `http://<host>:<port>/mcp`. Supports bearer tokens for authentication. Preferred networked option. |
+| `sse` | Server-sent events | Legacy MCP clients that still require SSE | Provides one-way streaming at `http://<host>:<port>/sse`. Use only when clients cannot consume `streamable-http`. |
 
-You can specify the transport method using the `--transport` argument when running the server. For `sse` and `streamable-http` you can also optionally specify the host and port:
+Set the transport with `--transport`. `streamable-http` and `sse` accept optional `--host`/`--port` overrides:
 
 ```bash
-uvx lean-lsp-mcp --transport stdio # Default transport
-uvx lean-lsp-mcp --transport streamable-http # Available at http://127.0.0.1:8000/mcp
-uvx lean-lsp-mcp --transport sse --host localhost --port 12345 # Available at http://localhost:12345/sse
+uvx lean-lsp-mcp --transport stdio  # Default transport
+uvx lean-lsp-mcp --transport streamable-http  # http://127.0.0.1:8000/mcp
+uvx lean-lsp-mcp --transport sse --host localhost --port 12345  # http://localhost:12345/sse
 ```
 
 ### Bearer Token Authentication
@@ -165,7 +167,8 @@ Some (optional) features and integrations of `lean-lsp-mcp` are configured using
 
 - `LEAN_PROJECT_PATH`: (optional) Path to your Lean project root. Set this if the server cannot automatically detect your project.
 - `LEAN_LSP_MCP_TOKEN`: (optional) Secret token for bearer authentication when using `streamable-http` or `sse` transport.
-- `LEAN_STATE_SEARCH_URL`: (optional) URL for a self-hosted [premise-search.com](https://premise-search.com) instance.
+- `LEAN_STATE_SEARCH_URL`: (optional) URL for a self-hosted [Lean State Search](https://github.com/ruc-ai4math/LeanStateSearch) instance. Defaults to `https://premise-search.com`. **Recommended for production**: Self-host to ensure consistent Mathlib revision support matching your project.
+- `LEAN_STATE_SEARCH_REV`: (optional) Mathlib revision for premise-search queries. Defaults to `v4.16.0`. **Note**: The public premise-search.com instance may have limited revision support. Self-hosted instances can index any revision to match your project's Mathlib version (e.g., `v4.18.0`).
 - `LEAN_HAMMER_URL`: (optional) URL for a self-hosted [Lean Hammer Premise Search](https://github.com/hanwenzhu/lean-premise-server) instance.
 
 You can also often set these environment variables in your MCP client configuration:
@@ -173,7 +176,7 @@ You can also often set these environment variables in your MCP client configurat
 ```jsonc
 {
     "servers": {
-        "lean-lsp": {
+        "lean_lsp_mcp": {
             "type": "stdio",
             "command": "uvx",
             "args": [
@@ -221,6 +224,18 @@ Errors set ``isError: true`` and still include a descriptive text item after the
 
 Structured payloads follow the Language Server Protocol convention of **0-based** line/column positions and include
 sanitized ``file:///`` URIs alongside workspace-relative paths.
+
+### Machine-readable tool schema
+
+All tool parameters are defined with Pydantic models, and the repository publishes a generated
+schema at `bindings/tool_spec.json`. Each entry now includes both a compact field summary and the
+full JSON Schema (`inputSchema`) emitted by the underlying model.
+
+Regenerate the file after updating tool inputs (from the repo root, after installing dependencies):
+
+```bash
+PYTHONPATH=src python -m lean_lsp_mcp.tool_spec > bindings/tool_spec.json
+```
 
 ## Tools
 
@@ -553,7 +568,7 @@ Note: We use a simplified version, [LeanHammer](https://github.com/JOSHCLUNE/Lea
 
 #### lean_build
 
-Rebuild the Lean project and restart the Lean LSP server.
+Rebuild the Lean project and restart the `lean_lsp_mcp` server.
 
 ## Disabling Tools
 
@@ -590,6 +605,13 @@ Open an incomplete proof such as [putnam 1964 b2](https://github.com/trishullab/
 
 ![Designing proof approaches](media/proof_approaches.png)
 
+## Evaluation & Feedback Loop
+
+- Run `scripts/run_mcp_evaluations.sh` (requires `ANTHROPIC_API_KEY`) to execute the curated read-only evaluation in `evaluations/lean_lsp_readonly.xml`. The script invokes the vendored evaluation harness via stdio so the Lean MCP server stays in-process.
+- Each run appends a structured record to `reports/evaluation_runs.jsonl` capturing per-task metrics, tool durations, and the agent's `<summary>`/`<feedback>` tags. Reports are rendered to `reports/lean_lsp_readonly.md`.
+- Post-processing with `scripts/analyze_evaluation_feedback.py` produces `reports/feedback_summary.md` (Markdown) and `reports/feedback_summary.json` (machine-readable) that highlight recurring tool feedback and usage hotspots.
+- Review the feedback summary after each run and fold the actionable items back into tool descriptions or schema tweaks until accuracy stabilises.
+
 ## Notes on MCP Security
 
 There are many valid security concerns with the Model Context Protocol (MCP) in general!
@@ -623,7 +645,7 @@ Citing this repository is highly appreciated but not required by the license.
 ```bibtex
 @software{lean-lsp-mcp,
   author = {Oliver Dressler},
-  title = {{Lean LSP MCP: Tools for agentic interaction with the Lean theorem prover}},
+  title = {{lean_lsp_mcp: Tools for agentic interaction with the Lean theorem prover}},
   url = {https://github.com/oOo0oOo/lean-lsp-mcp},
   month = {3},
   year = {2025}
