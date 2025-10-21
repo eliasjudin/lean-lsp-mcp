@@ -117,6 +117,8 @@ class AppContext:
     rate_limit: Dict[str, List[int]]
     project_cache: Dict[str, str]
     client_lock: Lock
+    file_cache_lock: Lock
+    project_cache_lock: Lock
 
     def __init__(
         self,
@@ -127,6 +129,8 @@ class AppContext:
         rate_limit: Dict[str, List[int]],
         project_cache: Dict[str, str],
         client_lock: Lock,
+        file_cache_lock: Lock,
+        project_cache_lock: Lock,
     ) -> None:
         self.lean_project_path = lean_project_path
         self.client = client
@@ -134,6 +138,8 @@ class AppContext:
         self.rate_limit = rate_limit
         self.project_cache = project_cache
         self.client_lock = client_lock
+        self.file_cache_lock = file_cache_lock
+        self.project_cache_lock = project_cache_lock
 
 
 @asynccontextmanager
@@ -157,6 +163,8 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
             },
             project_cache={},
             client_lock=Lock(),
+            file_cache_lock=Lock(),
+            project_cache_lock=Lock(),
         )
         if context.lean_project_path:
             try:
@@ -659,13 +667,22 @@ def error_result(
     if combined_hints:
         detail_bullets.extend(f"Hint: {hint}" for hint in combined_hints)
 
+    trimmed_message = message.strip()
+    if trimmed_message:
+        if trimmed_message.casefold().startswith("error"):
+            summary_headline = trimmed_message
+        else:
+            summary_headline = f"Error: {trimmed_message}"
+    else:
+        summary_headline = "Error"
+
     if response_format is None and ctx is not None:
         request_context = getattr(ctx, "request_context", None)
         if request_context is not None:
             response_format = getattr(request_context, "_response_format_hint", None)
 
     selected_format = normalize_response_format(response_format)
-    summary_markdown = build_markdown_summary(f"Error: {message}", detail_bullets)
+    summary_markdown = build_markdown_summary(summary_headline, detail_bullets)
     limited_items, truncated, truncated_sections = apply_character_limit(
         [_text_item(summary_markdown)]
     )
@@ -688,7 +705,7 @@ def error_result(
             structured_payload if structured_payload is not None else {}
         )
         meta = structured_for_json.setdefault("_meta", {})
-        meta.setdefault("summary", f"Error: {message}")
+        meta.setdefault("summary", summary_headline)
         payload: List[Dict[str, Any]] = []
         payload.append(_json_item(structured_for_json))
         payload.extend(other_items)
@@ -716,13 +733,43 @@ def _sanitize_path_label(path: str) -> str:
     if not path:
         return path
     try:
-        rel = os.path.relpath(path, os.getcwd())
-        if not rel.startswith(".."):
-            return rel.replace(os.sep, "/")
-    except ValueError:  # pragma: no cover - handles different drive on Windows
-        pass
-    basename = os.path.basename(path)
-    return basename if basename else path
+        path_obj = Path(path).expanduser()
+    except TypeError:
+        return ""
+    try:
+        resolved = path_obj.resolve(strict=False)
+    except OSError:
+        if path_obj.is_absolute():
+            resolved = path_obj
+        else:
+            resolved = (Path.cwd() / path_obj).resolve(strict=False)
+    except RuntimeError:
+        resolved = path_obj.absolute()
+    allowed_roots: List[Path] = [Path.cwd()]
+    env_root = os.environ.get("LEAN_PROJECT_PATH")
+    if env_root:
+        try:
+            allowed_roots.append(Path(env_root).expanduser().resolve(strict=False))
+        except OSError:
+            pass
+        except RuntimeError:
+            allowed_roots.append(Path(env_root).expanduser().absolute())
+    for root in allowed_roots:
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            continue
+        sanitized = relative.as_posix()
+        if sanitized:
+            return sanitized
+        return "."
+    fallback = resolved.name or path_obj.name
+    if fallback:
+        return fallback
+    parts = resolved.parts
+    if parts:
+        return parts[-1]
+    return path_obj.as_posix()
 
 
 def _identity_for_rel_path(ctx: Context, rel_path: str) -> FileIdentity:
@@ -871,7 +918,12 @@ def lsp_build(ctx: Context, params: LeanBuildInput) -> Any:
         client: LeanLSPClient | None = lifespan.client
         if client:
             client.close()
-            lifespan.file_content_hashes.clear()
+            file_cache_lock = getattr(lifespan, "file_cache_lock", None)
+            if file_cache_lock is None:
+                file_cache_lock = Lock()
+                lifespan.file_cache_lock = file_cache_lock
+            with file_cache_lock:
+                lifespan.file_content_hashes.clear()
 
         if clean:
             clean_proc = subprocess.run(
@@ -3043,9 +3095,9 @@ def state_search(ctx: Context, params: LeanStateSearchInput) -> Any:
       self-hosting: https://github.com/ruc-ai4math/LeanStateSearch
       Example: ``LEAN_STATE_SEARCH_URL=http://localhost:3000``
     - ``LEAN_STATE_SEARCH_REV`` (Optional[str]): Mathlib revision to query against.
-      Defaults to "v4.16.0". The public instance may have limited revision support.
+      Defaults to "v4.22.0". The public instance may have limited revision support.
       Self-hosted instances can index any revision.
-      Example: ``LEAN_STATE_SEARCH_REV=v4.18.0``
+      Example: ``LEAN_STATE_SEARCH_REV=v4.23.0``
 
     Returns
     -------
@@ -3111,9 +3163,9 @@ def state_search(ctx: Context, params: LeanStateSearchInput) -> Any:
         )
 
     # premise-search.com API changed to GET with query parameters
-    # Default to v4.16.0 but allow override via environment variable
+    # Default to v4.22.0 but allow override via environment variable
     # Note: Public instance may have limited revision support; self-hosting recommended
-    mathlib_rev = os.getenv("LEAN_STATE_SEARCH_REV", "v4.16.0")
+    mathlib_rev = os.getenv("LEAN_STATE_SEARCH_REV", "v4.22.0")
     goal_text = goal_state["goals"][0]
 
     # Check for custom URL (self-hosted instance)
