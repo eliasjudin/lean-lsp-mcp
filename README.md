@@ -9,14 +9,18 @@
     <img src="https://img.shields.io/pypi/v/lean-lsp-mcp.svg" alt="PyPI version" />
   </a>
   <a href="">
-    <img src="https://img.shields.io/github/last-commit/oOo0oOo/lean-lsp-mcp" alt="last update" />
+    <img src="https://img.shields.io/github/last-commit/eliasjudin/lean-lsp-mcp" alt="last update" />
   </a>
-  <a href="https://github.com/oOo0oOo/lean-lsp-mcp/blob/master/LICENSE">
-    <img src="https://img.shields.io/github/license/oOo0oOo/lean-lsp-mcp.svg" alt="license" />
+  <a href="https://github.com/eliasjudin/lean-lsp-mcp/blob/master/LICENSE">
+    <img src="https://img.shields.io/github/license/eliasjudin/lean-lsp-mcp.svg" alt="license" />
   </a>
 </p>
 
-MCP server that allows agentic interaction with the [Lean theorem prover](https://lean-lang.org/) via the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) using [leanclient](https://github.com/oOo0oOo/leanclient). This server provides a range of tools for LLM agents to understand, analyze and interact with Lean projects.
+> **Note**: This is a fork of the original [lean-lsp-mcp](https://github.com/oOo0oOo/lean-lsp-mcp) project by Oliver Dressler.
+
+`lean_lsp_mcp` is an MCP server that enables agentic interaction with the [Lean theorem prover](https://lean-lang.org/) via the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) using [leanclient](https://github.com/oOo0oOo/leanclient). This server provides a range of tools for LLM agents to understand, analyze and interact with Lean projects.
+
+**Currently beta testing**: Please help us by submitting bug reports and feature requests!
 
 ## Key Features
 
