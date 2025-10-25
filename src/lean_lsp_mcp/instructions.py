@@ -34,6 +34,11 @@ INSTRUCTIONS = """## Workflow
 
 ## Positioning and Safety
 - Tool inputs use 1-indexed lines/columns. Raw LSP diagnostics remain 0-based—convert explicitly when correlating data.
+- Tools accept `character` as an alias for `column` (prefer `column`).
+- File-based tools accept `file_path` or `uri`, and also a nested `file` object `{ uri, path }` from previous responses.
+- Tools also accept a nested `position` object:
+  - LSP form (0-based): `{ line, character }` → normalized to 1-based.
+  - Convenience (1-based): `{ line, column }` → used as-is.
 - Always double-check the file identity (path + document version) before acting on goal output.
 - Keep iterations small: explore, reason, then suggest the next Lean step.
 """

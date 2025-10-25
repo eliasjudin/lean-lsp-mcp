@@ -19,16 +19,27 @@ logger = get_logger(__name__)
 
 
 def startup_client(ctx: Context):
-    """Initialize the Lean LSP client if not already set up.
+    """Initialize and cache a Lean LSP client for the active project.
 
     Args:
-        ctx (Context): Context object.
+        ctx: FastMCP context whose ``request_context`` tracks the Lean lifecycle state.
+
+    Returns:
+        None: The client instance is stored on the context lifespan for reuse.
+
+    Raises:
+        ValueError: If ``lifespan.lean_project_path`` has not been populated yet.
+        LeanclientNotInstalledError: If the optional ``leanclient`` dependency cannot be imported.
     """
     lifespan = ctx.request_context.lifespan_context
     client_lock: Lock | None = getattr(lifespan, "client_lock", None)
     if client_lock is None:
         client_lock = Lock()
         lifespan.client_lock = client_lock
+    file_cache_lock: Lock | None = getattr(lifespan, "file_cache_lock", None)
+    if file_cache_lock is None:
+        file_cache_lock = Lock()
+        lifespan.file_cache_lock = file_cache_lock
     # Fail fast if the optional dependency is missing so callers can surface a
     # helpful tool error instead of crashing the server import.
     LeanClientCls, _ = ensure_leanclient_available()
@@ -43,7 +54,8 @@ def startup_client(ctx: Context):
             if client.project_path == lean_project_path:
                 return
             client.close()
-            lifespan.file_content_hashes.clear()
+            with file_cache_lock:
+                lifespan.file_content_hashes.clear()
 
         with StdoutToStderr():
             try:
@@ -69,13 +81,13 @@ def startup_client(ctx: Context):
 
 
 def valid_lean_project_path(path: str) -> bool:
-    """Check if the given path is a valid Lean project path (contains a lean-toolchain file).
+    """Return whether ``path`` points to a Lean project root containing ``lean-toolchain``.
 
     Args:
-        path (str): Absolute path to check.
+        path: Absolute directory candidate to inspect.
 
     Returns:
-        bool: True if valid Lean project path, False otherwise.
+        bool: ``True`` when the directory exists and includes ``lean-toolchain``; ``False`` otherwise.
     """
     if not os.path.exists(path):
         return False
@@ -83,17 +95,33 @@ def valid_lean_project_path(path: str) -> bool:
 
 
 def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
-    """Check if the current LSP client is already set up and correct for this file. Otherwise, set it up.
+    """Ensure the cached Lean client is configured for ``file_path`` and return its project-relative path.
 
     Args:
-        ctx (Context): Context object.
-        file_path (str): Absolute path to the Lean file.
+        ctx: FastMCP context coordinating Lean project state.
+        file_path: Absolute path to the Lean source file requiring synchronization.
 
     Returns:
-        str: Relative file path if the client is set up correctly, otherwise None.
+        str | None: Project-relative path when the client is ready for the file; ``None`` if the file cannot be
+            associated with a Lean project root.
+
+    Raises:
+        ValueError: Propagated from :func:`startup_client` when the Lean project path is unset.
+
+    Examples:
+        >>> rel_path = setup_client_for_file(ctx, "/abs/project/Main.lean")
+        >>> rel_path.endswith(".lean")
+        True
     """
     lifespan = ctx.request_context.lifespan_context
-    project_cache = getattr(lifespan, "project_cache", {})
+    project_cache = getattr(lifespan, "project_cache", None)
+    if project_cache is None:
+        project_cache = {}
+        lifespan.project_cache = project_cache
+    project_cache_lock: Lock | None = getattr(lifespan, "project_cache_lock", None)
+    if project_cache_lock is None:
+        project_cache_lock = Lock()
+        lifespan.project_cache_lock = project_cache_lock
     abs_file_path = os.path.abspath(file_path)
     file_dir = os.path.dirname(abs_file_path)
 
@@ -110,8 +138,9 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
             if directory and directory not in cache_targets:
                 cache_targets.append(directory)
 
-        for directory in cache_targets:
-            project_cache[directory] = project_path
+        with project_cache_lock:
+            for directory in cache_targets:
+                project_cache[directory] = project_path
         startup_client(ctx)
         return rel
 
@@ -132,7 +161,8 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
 
     while current_dir and current_dir != prev_dir:
         visited_dirs.append(current_dir)
-        cached_root = project_cache.get(current_dir)
+        with project_cache_lock:
+            cached_root = project_cache.get(current_dir)
         if cached_root:
             rel_path = activate_project(cached_root, visited_dirs)
             if rel_path is not None:
@@ -142,7 +172,8 @@ def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
             if rel_path is not None:
                 return rel_path
         else:
-            project_cache[current_dir] = ""
+            with project_cache_lock:
+                project_cache[current_dir] = ""
 
         prev_dir = current_dir
         current_dir = os.path.dirname(current_dir)
