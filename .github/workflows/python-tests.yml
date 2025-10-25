@@ -18,6 +18,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ripgrep
+      - name: Set pending commit status (pytest)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+            await github.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha,
+              state: 'pending',
+              context: 'pytest',
+              description: 'CI started'
+            });
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
@@ -26,3 +40,31 @@ jobs:
         env:
           LEAN_LOG_LEVEL: 'NONE'
         run: pytest -q
+      - name: Mark success (pytest)
+        if: ${{ success() && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+            await github.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha,
+              state: 'success',
+              context: 'pytest',
+              description: 'All tests passed'
+            });
+      - name: Mark failure (pytest)
+        if: ${{ failure() && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+            await github.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha,
+              state: 'failure',
+              context: 'pytest',
+              description: 'Tests failed'
+            });
