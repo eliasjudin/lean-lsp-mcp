@@ -1,0 +1,82 @@
+name: Branch Matrix Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [
+          'pr-45a68cb', 'pr-aca9eeb', 'pr-90b5d84', 'pr-a701eac', 'pr-6203e7d',
+          'pr-d623357', 'pr-13297b1', 'pr-f33f5d5', 'pr-1ecde35', 'pr-f206ea5', 'pr-883debe'
+        ]
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
+      - name: Determine HEAD SHA
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+      - name: Set pending status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = core.getInput('sha') || process.env.SHA;
+            await github.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: sha ?? '${{ steps.sha.outputs.sha }}',
+              state: 'pending',
+              context: 'pytest',
+              description: `CI started for ${{ matrix.ref }}`
+            });
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Run tests
+        env:
+          LEAN_LOG_LEVEL: 'NONE'
+        run: pytest -q
+      - name: Mark success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ steps.sha.outputs.sha }}',
+              state: 'success',
+              context: 'pytest',
+              description: `All tests passed for ${{ matrix.ref }}`
+            });
+      - name: Mark failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ steps.sha.outputs.sha }}',
+              state: 'failure',
+              context: 'pytest',
+              description: `Tests failed for ${{ matrix.ref }}`
+            });
