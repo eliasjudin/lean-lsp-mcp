@@ -6,7 +6,8 @@ This is a fork of the lean-lsp-mcp project.
 Original repository: https://github.com/oOo0oOo/lean-lsp-mcp
 Original author: Oliver Dressler
 
-This fork is maintained at: https://github.com/eliasjudin/lean-lsp-mcp
+This fork is maintained by Elias Judin at: https://github.com/eliasjudin/lean-lsp-mcp
 
 The original work is licensed under the MIT License, and this fork 
-maintains the same license. See the LICENSE file for the full license text.
+maintains the same license. Both copyright holders are listed in the 
+LICENSE file.
