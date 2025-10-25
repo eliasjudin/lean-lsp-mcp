@@ -1,9 +1,38 @@
 import os
 import sys
 import tempfile
-from typing import List, Dict, Optional
+import textwrap
+from typing import Any, Dict, List, Optional
+from urllib.parse import unquote, urlparse
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
+
+from lean_lsp_mcp.schema_types import (
+    DiagnosticEntry,
+    GoalPayload,
+    PaginationMeta,
+    Position,
+    Range,
+)
+
+
+class StdoutToStderr:
+    """Redirects stdout to stderr at the file descriptor level bc lake build logging"""
+
+    def __init__(self):
+        self.original_stdout_fd = None
+
+    def __enter__(self):
+        self.original_stdout_fd = os.dup(sys.stdout.fileno())
+        stderr_fd = sys.stderr.fileno()
+        os.dup2(stderr_fd, sys.stdout.fileno())
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.original_stdout_fd is not None:
+            os.dup2(self.original_stdout_fd, sys.stdout.fileno())
+            os.close(self.original_stdout_fd)
+            self.original_stdout_fd = None
 
 
 class OutputCapture:
@@ -16,9 +45,7 @@ class OutputCapture:
         self.captured_output = ""
 
     def __enter__(self):
-        self.temp_file = tempfile.NamedTemporaryFile(
-            mode="w+", delete=False, encoding="utf-8"
-        )
+        self.temp_file = tempfile.NamedTemporaryFile(mode="w+", delete=False)
         self.original_stdout_fd = os.dup(sys.stdout.fileno())
         self.original_stderr_fd = os.dup(sys.stderr.fileno())
         os.dup2(self.temp_file.fileno(), sys.stdout.fileno())
@@ -41,29 +68,185 @@ class OutputCapture:
         return self.captured_output
 
 
-def format_diagnostics(diagnostics: List[Dict], select_line: int = -1) -> List[str]:
-    """Format the diagnostics messages.
+def _normalize_position(line: int, character: int) -> Position:
+    """Return 1-indexed line/column payloads."""
 
-    Args:
-        diagnostics (List[Dict]): List of diagnostics.
-        select_line (int): If -1, format all diagnostics. If >= 0, only format diagnostics for this line.
+    return {"line": line + 1, "column": character + 1}
 
-    Returns:
-        List[str]: Formatted diagnostics messages.
-    """
-    msgs = []
+
+def normalize_range(range_dict: Optional[Dict[str, Dict[str, int]]]) -> Optional[Range]:
+    """Convert an LSP range (0-indexed) into 1-indexed coordinates."""
+
+    if not range_dict:
+        return None
+    return {
+        "start": _normalize_position(
+            range_dict["start"]["line"], range_dict["start"]["character"]
+        ),
+        "end": _normalize_position(
+            range_dict["end"]["line"], range_dict["end"]["character"]
+        ),
+    }
+
+
+def compute_pagination(
+    total_lines: int,
+    start_line: Optional[int],
+    line_count: Optional[int],
+) -> tuple[int, int, PaginationMeta]:
+    """Normalize pagination inputs and build response metadata."""
+
+    if start_line is None or start_line < 1:
+        start_line = 1
+    if line_count is None or line_count < 1:
+        line_count = total_lines - start_line + 1
+
+    end_line = min(total_lines, start_line + line_count - 1)
+    has_more = end_line < total_lines
+    next_start = end_line + 1 if has_more else None
+    meta: PaginationMeta = {
+        "start_line": start_line,
+        "end_line": end_line if total_lines else 0,
+        "total_lines": total_lines,
+        "has_more": has_more,
+        "next_start_line": next_start,
+    }
+    return start_line, end_line, meta
+
+
+def diagnostics_to_entries(
+    diagnostics: List[Dict], select_line: int = -1
+) -> List[DiagnosticEntry]:
+    """Convert Lean diagnostics to structured entries."""
+
+    entries: List[Dict[str, Any]] = []
     if select_line != -1:
         diagnostics = filter_diagnostics_by_position(diagnostics, select_line, None)
 
-    # Format more compact
     for diag in diagnostics:
-        r = diag.get("fullRange", diag.get("range", None))
-        if r is None:
-            r_text = "No range"
+        primary_range = diag.get("fullRange", diag.get("range"))
+        entry: DiagnosticEntry = {
+            "message": diag.get("message", ""),
+            "severity": diag.get("severity"),
+            "range": normalize_range(primary_range),
+        }
+        if "source" in diag:
+            entry["source"] = diag["source"]
+        if "code" in diag:
+            entry["code"] = diag["code"]
+        entries.append(entry)
+    return entries
+
+
+_SEVERITY_LABELS = {
+    1: "Error",
+    2: "Warning",
+    3: "Info",
+    4: "Hint",
+}
+
+
+def _diagnostic_path(diag: Dict[str, Any]) -> Optional[str]:
+    file_candidate = (
+        diag.get("file")
+        or diag.get("path")
+        or diag.get("fileName")
+        or diag.get("uri")
+    )
+    if isinstance(file_candidate, str) and file_candidate.startswith("file://"):
+        parsed = urlparse(file_candidate)
+        return unquote(parsed.path)
+    if isinstance(file_candidate, str) and file_candidate.startswith("file:"):
+        return unquote(file_candidate[5:])
+    return file_candidate if isinstance(file_candidate, str) else None
+
+
+def _format_range_positions(range_dict: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not range_dict:
+        return None
+
+    start = range_dict.get("start", {})
+    end = range_dict.get("end", {})
+    line_start = start.get("line")
+    col_start = start.get("character")
+    line_end = end.get("line")
+    col_end = end.get("character")
+
+    if line_start is None or col_start is None:
+        return None
+
+    start_label = f"{line_start + 1}:{col_start + 1}"
+    if line_end is None or col_end is None:
+        return start_label
+
+    end_label = f"{line_end + 1}:{col_end + 1}"
+    return f"{start_label}-{end_label}"
+
+
+def _format_range_label(range_dict: Optional[Dict[str, Any]], diag: Dict[str, Any]) -> str:
+    positions = _format_range_positions(range_dict)
+    if not positions:
+        return "No range"
+
+    path = _diagnostic_path(diag)
+    if path:
+        return f"{path}:{positions}"
+    return positions
+
+
+def _format_related_information(related: List[Dict[str, Any]]) -> List[str]:
+    formatted: List[str] = []
+    for info in related:
+        message = info.get("message", "").strip()
+        location = info.get("location", {})
+        range_dict = location.get("range")
+        uri = location.get("uri")
+        diag_stub = {"uri": uri} if uri else {}
+        location_label = _format_range_label(range_dict, diag_stub)
+
+        if message:
+            formatted.append(f"{location_label}\n{message}")
         else:
-            r_text = f"l{r['start']['line'] + 1}c{r['start']['character'] + 1}-l{r['end']['line'] + 1}c{r['end']['character'] + 1}"
-        msgs.append(f"{r_text}, severity: {diag['severity']}\n{diag['message']}")
-    return msgs
+            formatted.append(location_label)
+    return formatted
+
+
+def format_diagnostics(diagnostics: List[Dict], select_line: int = -1) -> List[str]:
+    """Format diagnostics for legacy text responses."""
+
+    if select_line != -1:
+        diagnostics = filter_diagnostics_by_position(diagnostics, select_line, None)
+
+    formatted_messages: List[str] = []
+    for diag in diagnostics:
+        severity_value = diag.get("severity")
+        severity_label = _SEVERITY_LABELS.get(severity_value, str(severity_value))
+        range_dict = diag.get("fullRange", diag.get("range"))
+        location_label = _format_range_label(range_dict, diag)
+
+        source = diag.get("source")
+        code = diag.get("code")
+        provenance_parts = [str(part) for part in (source, code) if part]
+        provenance_suffix = f" ({'#'.join(provenance_parts)})" if provenance_parts else ""
+
+        header = f"[{severity_label}] {location_label}{provenance_suffix}"
+
+        message = diag.get("message", "")
+        message_block = message.rstrip("\n")
+
+        related = diag.get("relatedInformation") or []
+        related_blocks = _format_related_information(related)
+        related_text = [textwrap.indent(block, "  ") for block in related_blocks]
+
+        block_lines = [header]
+        if message_block:
+            block_lines.append(message_block)
+        if related_text:
+            block_lines.extend(related_text)
+
+        formatted_messages.append("\n".join(block_lines))
+
+    return formatted_messages
 
 
 def format_goal(goal, default_msg):
@@ -71,6 +254,29 @@ def format_goal(goal, default_msg):
         return default_msg
     rendered = goal.get("rendered")
     return rendered.replace("```lean\n", "").replace("\n```", "") if rendered else None
+
+
+def clean_rendered(goal: Optional[Dict[str, Any]]) -> Optional[str]:
+    if goal is None:
+        return None
+    rendered = goal.get("rendered")
+    if rendered is None:
+        return None
+    return rendered.replace("```lean\n", "").replace("\n```", "")
+
+
+def goal_to_payload(goal: Optional[Dict[str, Any]]) -> Optional[GoalPayload]:
+    if goal is None:
+        return None
+    payload: GoalPayload = {
+        "rendered": clean_rendered(goal),
+        "goals": goal.get("goals", []),
+    }
+    if "userState" in goal:
+        payload["user_state"] = goal["userState"]
+    if "pp" in goal:
+        payload["pp"] = goal["pp"]
+    return payload
 
 
 def _utf16_index_to_py_index(text: str, utf16_index: int) -> int | None:
