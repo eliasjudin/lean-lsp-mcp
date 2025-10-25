@@ -31,6 +31,16 @@ class FileIdentity(TypedDict):
     relative_path: str
 
 
+class DiagnosticRelatedLocation(TypedDict, total=False):
+    uri: str
+    range: LSPRange
+
+
+class DiagnosticRelatedInformation(TypedDict, total=False):
+    message: str
+    location: DiagnosticRelatedLocation
+
+
 class DiagnosticEntry(TypedDict, total=False):
     message: str
     severity: str | None
@@ -38,7 +48,7 @@ class DiagnosticEntry(TypedDict, total=False):
     range: LSPRange | None
     code: str | int
     tags: List[str]
-    relatedInformation: List[Dict]
+    relatedInformation: List[DiagnosticRelatedInformation]
     # LSP diagnostic source (e.g., "Lean 4", "linter", "elaborator")
     source: str
 
@@ -73,6 +83,8 @@ class PaginationMeta(TypedDict, total=False):
 
 __all__ = [
     "DiagnosticEntry",
+    "DiagnosticRelatedInformation",
+    "DiagnosticRelatedLocation",
     "DiagnosticsPayload",
     "DiagnosticsSummary",
     "FileIdentity",

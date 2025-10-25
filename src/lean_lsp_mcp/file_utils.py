@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from threading import Lock
 from typing import Dict, Optional, TYPE_CHECKING
 
 from mcp.server.fastmcp import Context
@@ -38,14 +39,17 @@ def get_relative_file_path(lean_project_path: str, file_path: str) -> Optional[s
 
 
 def get_file_contents(abs_path: str) -> str:
-    for enc in ("utf-8", "latin-1"):
+    for enc in ("utf-8", "latin-1", None):
         try:
+            if enc is None:
+                with open(abs_path, "r") as f:
+                    return f.read()
             with open(abs_path, "r", encoding=enc) as f:
                 return f.read()
         except UnicodeDecodeError:
+            if enc is None:
+                raise
             continue
-    with open(abs_path, "r", encoding=None) as f:
-        return f.read()
 
 
 def update_file(ctx: Context, rel_path: str) -> str:
@@ -67,21 +71,23 @@ def update_file(ctx: Context, rel_path: str) -> str:
     ).hexdigest()
 
     # Check if file_contents have changed
-    file_content_hashes: Dict[str, str] = (
-        ctx.request_context.lifespan_context.file_content_hashes
-    )
-    if rel_path not in file_content_hashes:
+    lifespan = ctx.request_context.lifespan_context
+    file_cache_lock: Lock | None = getattr(lifespan, "file_cache_lock", None)
+    if file_cache_lock is None:
+        file_cache_lock = Lock()
+        lifespan.file_cache_lock = file_cache_lock
+
+    with file_cache_lock:
+        file_content_hashes: Dict[str, str] = lifespan.file_content_hashes
+        previous_hash = file_content_hashes.get(rel_path)
+        if previous_hash is None:
+            file_content_hashes[rel_path] = file_hash
+            return file_content
+        if previous_hash == file_hash:
+            return file_content
         file_content_hashes[rel_path] = file_hash
-        return file_content
 
-    elif file_hash == file_content_hashes[rel_path]:
-        return file_content
-
-    # Update file_contents
-    file_content_hashes[rel_path] = file_hash
-
-    # Reload file in LSP
-    client: LeanLSPClient = ctx.request_context.lifespan_context.client
+    client: LeanLSPClient = lifespan.client
     try:
         client.close_files([rel_path])
     except Exception:

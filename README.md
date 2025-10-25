@@ -168,7 +168,7 @@ Some (optional) features and integrations of `lean-lsp-mcp` are configured using
 - `LEAN_PROJECT_PATH`: (optional) Path to your Lean project root. Set this if the server cannot automatically detect your project.
 - `LEAN_LSP_MCP_TOKEN`: (optional) Secret token for bearer authentication when using `streamable-http` or `sse` transport.
 - `LEAN_STATE_SEARCH_URL`: (optional) URL for a self-hosted [Lean State Search](https://github.com/ruc-ai4math/LeanStateSearch) instance. Defaults to `https://premise-search.com`. **Recommended for production**: Self-host to ensure consistent Mathlib revision support matching your project.
-- `LEAN_STATE_SEARCH_REV`: (optional) Mathlib revision for premise-search queries. Defaults to `v4.16.0`. **Note**: The public premise-search.com instance may have limited revision support. Self-hosted instances can index any revision to match your project's Mathlib version (e.g., `v4.18.0`).
+- `LEAN_STATE_SEARCH_REV`: (optional) Mathlib revision for premise-search queries. Defaults to `v4.22.0`. **Note**: The public premise-search.com instance may have limited revision support. Self-hosted instances can index any revision to match your project's Mathlib version (e.g., `v4.23.0`).
 - `LEAN_HAMMER_URL`: (optional) URL for a self-hosted [Lean Hammer Premise Search](https://github.com/hanwenzhu/lean-premise-server) instance.
 
 You can also often set these environment variables in your MCP client configuration:
