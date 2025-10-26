@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-import urllib.request
 from types import SimpleNamespace
 
 import pytest
-
 from conftest import load_from_src
 
 

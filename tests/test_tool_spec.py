@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from conftest import load_from_src
 
 schema = load_from_src("lean_lsp_mcp.schema")
 tool_spec = load_from_src("lean_lsp_mcp.tool_spec")
+spec_tools = load_from_src("lean_lsp_mcp.server_components.spec_tools")
+tool_inputs = load_from_src("lean_lsp_mcp.tool_inputs")
 
 
 def test_tool_spec_includes_expected_metadata():
@@ -46,3 +50,18 @@ def test_tool_spec_includes_expected_metadata():
     assert build_annotations["destructiveHint"] is True
     assert build_annotations["openWorldHint"] is False
     assert build_annotations["title"] == "Rebuild Lean Project"
+
+
+def test_tool_spec_tool_returns_summary_and_resource():
+    ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=SimpleNamespace()))
+    params = tool_inputs.LeanToolSpecInput(response_format=None)
+
+    result = spec_tools.tool_spec(ctx, params)
+
+    assert result["isError"] is False
+    assert result["content"][0]["type"] == "text"
+    assert "tool specification" in result["content"][0]["text"].lower()
+
+    resource = next(item for item in result["content"] if item["type"] == "resource")
+    assert resource["resource"]["mimeType"] == "application/json"
+    assert result["structuredContent"]["version"] == tool_spec.TOOL_SPEC_VERSION

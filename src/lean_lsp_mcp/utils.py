@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import base64
 import contextlib
+import hmac
 import io
+import json
+import logging
 import os
 import sys
 import tempfile
 import textwrap
 from collections import Counter
-from pathlib import Path, PurePath, PurePosixPath
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from pathlib import Path, PurePosixPath
+from typing import IO, Any, Dict, Iterable, List, Mapping, Optional, TextIO
 from urllib.parse import unquote, urlparse
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
@@ -25,12 +30,12 @@ from lean_lsp_mcp.schema_types import (
 class StdoutToStderr:
     """Redirects stdout to stderr at the file descriptor level bc lake build logging"""
 
-    def __init__(self):
-        self.original_stdout_fd = None
-        self._fallback = False
-        self._original_stdout = None
+    def __init__(self) -> None:
+        self.original_stdout_fd: int | None = None
+        self._fallback: bool = False
+        self._original_stdout: TextIO | None = None
 
-    def __enter__(self):
+    def __enter__(self) -> StdoutToStderr:
         stdout = sys.stdout
         try:
             stdout_fd = stdout.fileno()
@@ -43,16 +48,16 @@ class StdoutToStderr:
             self._original_stdout = stdout
 
             class _StderrWriter:
-                def __init__(self, original):
+                def __init__(self, original: TextIO) -> None:
                     self._original = original
 
-                def write(self, data):
+                def write(self, data: str) -> None:
                     sys.stderr.write(data)
 
-                def flush(self):
+                def flush(self) -> None:
                     sys.stderr.flush()
 
-                def __getattr__(self, name):
+                def __getattr__(self, name: str) -> Any:
                     try:
                         return getattr(self._original, name)
                     except AttributeError:
@@ -64,7 +69,12 @@ class StdoutToStderr:
             os.dup2(stderr_fd, stdout_fd)
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         if self._fallback:
             if self._original_stdout is not None:
                 sys.stdout = self._original_stdout
@@ -77,20 +87,64 @@ class StdoutToStderr:
                 self.original_stdout_fd = None
 
 
+def request_id_from_context(ctx: Any | None) -> str | None:
+    if ctx is None:
+        return None
+    request_context = getattr(ctx, "request_context", None)
+    if request_context is None:
+        return None
+    request_id = getattr(request_context, "request_id", None)
+    if request_id is None:
+        return None
+    return str(request_id)
+
+
+def log_event(
+    logger: logging.Logger,
+    level: int,
+    message: str,
+    *,
+    ctx: Any | None = None,
+    exc_info: Any | None = None,
+    **fields: Any,
+) -> None:
+    if logger is None:
+        return
+    request_id = request_id_from_context(ctx)
+    if request_id is not None and "request_id" not in fields:
+        fields["request_id"] = request_id
+    serialized = ""
+    if fields:
+        try:
+            serialized = json.dumps(
+                fields,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError):
+            serialized = repr(fields)
+    text = message
+    if serialized:
+        text = f"{message} | {serialized}" if message else serialized
+    logger.log(level, text, exc_info=exc_info)
+
+
 class OutputCapture:
     """Capture any output to stdout and stderr at the file descriptor level."""
 
-    def __init__(self):
-        self.original_stdout_fd = None
-        self.original_stderr_fd = None
-        self.temp_file = None
+    def __init__(self) -> None:
+        self.original_stdout_fd: int | None = None
+        self.original_stderr_fd: int | None = None
+        self.temp_file: IO[str] | None = None
         self.captured_output = ""
         self._fallback = False
-        self._stdout_redirect = None
-        self._stderr_redirect = None
+        self._stdout_redirect: contextlib.AbstractContextManager[Any] | None = None
+        self._stderr_redirect: contextlib.AbstractContextManager[Any] | None = None
         self._fallback_stream: io.StringIO | None = None
 
-    def __enter__(self):
+    def __enter__(self) -> OutputCapture:
         try:
             stdout_fd = sys.stdout.fileno()
             stderr_fd = sys.stderr.fileno()
@@ -112,7 +166,12 @@ class OutputCapture:
             os.dup2(self.temp_file.fileno(), stderr_fd)
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         if self._fallback:
             try:
                 if self._stderr_redirect is not None:
@@ -156,7 +215,7 @@ class OutputCapture:
                     pass
                 self.temp_file = None
 
-    def get_output(self):
+    def get_output(self) -> str:
         return self.captured_output
 
 
@@ -293,7 +352,7 @@ def diagnostics_to_entries(
 
 
 def summarize_diagnostics(entries: Iterable[DiagnosticEntry]) -> DiagnosticsSummary:
-    counts = Counter()
+    counts: Counter[str] = Counter()
     for entry in entries:
         label = entry.get("severity") or "unknown"
         counts[label] += 1
@@ -342,7 +401,7 @@ def uri_to_absolute_path(uri: str | None) -> str | None:
 
     try:
         parsed = urlparse(uri)
-    except Exception:
+    except (ValueError, AttributeError):
         return None
 
     scheme = parsed.scheme
@@ -480,15 +539,25 @@ def format_diagnostics(
     formatted_messages: List[str] = []
     for diag in diagnostics:
         severity_value = diag.get("severity")
-        severity_label = _SEVERITY_LABELS.get(severity_value)
-        severity_display = (
-            severity_label.capitalize() if severity_label else str(severity_value)
-        )
+        severity_label, severity_code = _map_severity(severity_value)
+        if severity_label:
+            severity_display = severity_label.capitalize()
+        elif severity_code is not None:
+            severity_display = str(severity_code)
+        elif severity_value is None or severity_value == "":
+            severity_display = "Unknown"
+        else:
+            severity_display = str(severity_value)
+
         range_dict = diag.get("fullRange", diag.get("range"))
         location_label = _format_range_label(range_dict, diag)
 
         code = diag.get("code")
-        provenance_parts = [str(code)] if code else []
+        provenance_parts: List[str] = []
+        if code is not None:
+            code_str = str(code)
+            if code_str:
+                provenance_parts.append(code_str)
         provenance_suffix = f" ({'#'.join(provenance_parts)})" if provenance_parts else ""
 
         header = f"[{severity_display}] {location_label}{provenance_suffix}"
@@ -511,27 +580,60 @@ def format_diagnostics(
     return formatted_messages
 
 
-def format_goal(goal, default_msg):
+def format_goal(
+    goal: Mapping[str, Any] | None,
+    default_msg: str,
+) -> str | None:
     if goal is None:
         return default_msg
     return clean_rendered(goal)
 
 
-def clean_rendered(goal: Optional[Dict[str, Any]]) -> Optional[str]:
+def clean_rendered(goal: Mapping[str, Any] | None) -> Optional[str]:
     if goal is None:
         return None
     rendered = goal.get("rendered")
-    if rendered is None:
+    if not isinstance(rendered, str):
         return None
-    return rendered.replace("```lean\n", "").replace("\n```", "")
+    text = rendered
+    for prefix in ("```lean\r\n", "```lean\n", "```lean"):
+        if text.startswith(prefix):
+            text = text[len(prefix) :]
+            break
+    removed_suffix = False
+    for marker in ("\r\n```", "\n```"):
+        if marker in text:
+            before, after = text.rsplit(marker, 1)
+            if after.replace("\r", "").replace("\n", "") == "":
+                text = before + after
+                removed_suffix = True
+                break
+    if not removed_suffix and text.endswith("```"):
+        text = text[:-3]
+    return text
 
 
-def goal_to_payload(goal: Optional[Dict[str, Any]]) -> Optional[GoalPayload]:
+def goal_to_payload(goal: Mapping[str, Any] | None) -> Optional[GoalPayload]:
     if goal is None:
         return None
+    goals_value = goal.get("goals") or []
+    if isinstance(goals_value, list):
+        goals_list = list(goals_value)
+    elif isinstance(goals_value, tuple):
+        goals_list = list(goals_value)
+    elif isinstance(goals_value, str):
+        goals_list = [goals_value]
+    else:
+        try:
+            iterator = iter(goals_value)
+        except TypeError:
+            goals_list = [goals_value]
+        else:
+            goals_list = list(iterator)
+
     payload: GoalPayload = {
         "rendered": clean_rendered(goal),
-        "goals": goal.get("goals", []),
+        "goals": goals_list,
     }
     if "userState" in goal:
         payload["user_state"] = goal["userState"]
@@ -622,7 +724,7 @@ def extract_range(content: str, range_info: Mapping[str, Mapping[str, int]]) -> 
     return content[start_offset:end_offset]
 
 
-def find_start_position(content: str, query: str) -> dict | None:
+def find_start_position(content: str, query: str) -> dict[str, int] | None:
     """Find the position of the query in the content.
 
     Args:
@@ -686,10 +788,10 @@ def filter_diagnostics_by_position(
 
 
 class OptionalTokenVerifier(TokenVerifier):
-    def __init__(self, expected_token: str):
-        self.expected_token = expected_token
+    def __init__(self, expected_token: str) -> None:
+        self.expected_token: str = expected_token
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if token == self.expected_token:
+        if isinstance(token, str) and hmac.compare_digest(token, self.expected_token):
             return AccessToken(token=token, client_id="lean-lsp-mcp", scopes=["user"])
         return None

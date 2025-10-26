@@ -1,7 +1,7 @@
 import argparse
 
 
-def main():
+def main() -> None:
     from lean_lsp_mcp.server import mcp
 
     parser = argparse.ArgumentParser(description="lean_lsp_mcp server")

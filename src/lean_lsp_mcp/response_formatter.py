@@ -6,7 +6,6 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
-
 CHARACTER_LIMIT = 25_000
 DEFAULT_RESPONSE_FORMAT = "markdown"
 JSON_RESPONSE_FORMAT = "json"

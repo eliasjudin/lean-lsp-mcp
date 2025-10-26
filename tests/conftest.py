@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from pathlib import Path
 import types
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -31,7 +31,7 @@ def ensure_mcp_stub() -> None:
     provider_pkg.TokenVerifier = TokenVerifier
     provider_pkg.AccessToken = AccessToken
 
-    mcp_pkg = sys.modules.setdefault("mcp", types.ModuleType("mcp"))
+    sys.modules.setdefault("mcp", types.ModuleType("mcp"))
     server_pkg = sys.modules.setdefault("mcp.server", types.ModuleType("mcp.server"))
     auth_pkg = sys.modules.setdefault("mcp.server.auth", types.ModuleType("mcp.server.auth"))
     sys.modules["mcp.server.auth.provider"] = provider_pkg

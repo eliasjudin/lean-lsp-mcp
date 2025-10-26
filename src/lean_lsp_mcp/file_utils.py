@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from threading import Lock
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Optional
 
 from mcp.server.fastmcp import Context
 
@@ -39,6 +39,19 @@ def get_relative_file_path(lean_project_path: str, file_path: str) -> Optional[s
 
 
 def get_file_contents(abs_path: str) -> str:
+    """Read file contents with fallback encoding strategies.
+    
+    Args:
+        abs_path: Absolute path to the file to read
+        
+    Returns:
+        File contents as string
+        
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        PermissionError: If file cannot be read
+        UnicodeDecodeError: If all encoding strategies fail
+    """
     for enc in ("utf-8", "latin-1", None):
         try:
             if enc is None:
@@ -50,6 +63,12 @@ def get_file_contents(abs_path: str) -> str:
             if enc is None:
                 raise
             continue
+    
+    # If all encodings fail, raise an error
+    raise UnicodeDecodeError(
+        "unknown", b"", 0, 1,
+        f"Failed to decode file {abs_path} with utf-8, latin-1, or default encoding"
+    )
 
 
 def update_file(ctx: Context, rel_path: str) -> str:
@@ -70,7 +89,7 @@ def update_file(ctx: Context, rel_path: str) -> str:
         file_content.encode("utf-8", "surrogatepass")
     ).hexdigest()
 
-    # Check if file_contents have changed
+    # Check if file_contents have changed - fix race condition by keeping client interaction within lock
     lifespan = ctx.request_context.lifespan_context
     file_cache_lock: Lock | None = getattr(lifespan, "file_cache_lock", None)
     if file_cache_lock is None:
@@ -85,11 +104,16 @@ def update_file(ctx: Context, rel_path: str) -> str:
             return file_content
         if previous_hash == file_hash:
             return file_content
+        
+        # Update hash and close file atomically to avoid race condition
         file_content_hashes[rel_path] = file_hash
-
-    client: LeanLSPClient = lifespan.client
-    try:
-        client.close_files([rel_path])
-    except Exception:
-        pass
+        
+        # Close the file in the client if available
+        client: LeanLSPClient = lifespan.client
+        if client is not None:
+            try:
+                client.close_files([rel_path])
+            except (OSError, RuntimeError):
+                pass
+    
     return file_content

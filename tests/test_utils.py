@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from conftest import load_from_src
 
 utils = load_from_src("lean_lsp_mcp.utils")
@@ -135,6 +134,26 @@ def test_format_diagnostics_includes_severity_and_code():
     ]
 
 
+def test_format_diagnostics_handles_numeric_zero_code():
+    diagnostics = [
+        {
+            "message": "missing field",
+            "severity": 1,
+            "code": 0,
+            "range": {
+                "start": {"line": 1, "character": 3},
+                "end": {"line": 1, "character": 7},
+            },
+            "file": "src/Bar.lean",
+        }
+    ]
+
+    formatted = utils.format_diagnostics(diagnostics)
+    assert formatted == [
+        "[Error] src/Bar.lean:2:4-2:8 (0)\nmissing field"
+    ]
+
+
 def test_format_diagnostics_indents_related_information():
     diagnostics = [
         {
@@ -203,6 +222,37 @@ def test_format_diagnostics_handles_missing_range():
     assert formatted == ["[Error] No range\ninternal error"]
 
 
+def test_format_diagnostics_handles_string_severity():
+    diagnostics = [
+        {
+            "message": "string severity",
+            "severity": "2",
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 0, "character": 1},
+            },
+        }
+    ]
+
+    formatted = utils.format_diagnostics(diagnostics)
+    assert formatted == ["[Warning] 1:1-1:2\nstring severity"]
+
+
+def test_format_diagnostics_handles_missing_severity():
+    diagnostics = [
+        {
+            "message": "no severity",
+            "range": {
+                "start": {"line": 1, "character": 2},
+                "end": {"line": 1, "character": 3},
+            },
+        }
+    ]
+
+    formatted = utils.format_diagnostics(diagnostics)
+    assert formatted == ["[Unknown] 2:3-2:4\nno severity"]
+
+
 def test_output_capture_restores_after_exception():
     class Boom(Exception):
         pass
@@ -254,3 +304,23 @@ def test_extract_range_allows_cursor_at_document_end():
         },
     )
     assert result == ""
+
+
+def test_goal_to_payload_copies_goal_list():
+    goal = {
+        "rendered": "```lean\nfoo\n```",
+        "goals": ["g1", "g2"],
+    }
+    payload = utils.goal_to_payload(goal)
+    goal["goals"].append("g3")
+
+    assert payload["goals"] == ["g1", "g2"]
+    assert payload["rendered"] == "foo"
+
+
+def test_clean_rendered_strips_only_outer_markdown_fence():
+    goal = {
+        "rendered": "```lean\n#eval \"```\"\n```\n",
+    }
+    cleaned = utils.clean_rendered(goal)
+    assert cleaned == "#eval \"```\"\n"

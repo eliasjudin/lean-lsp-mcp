@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from conftest import load_from_src
 
 server = load_from_src("lean_lsp_mcp.server")
@@ -79,6 +79,25 @@ def test_derive_error_hints_for_io_failure_looks_at_details() -> None:
     assert any("Run `lean_build`" in hint for hint in hints)
 
 
+def test_error_result_handles_missing_request_context() -> None:
+    ctx = SimpleNamespace()
+
+    result = server.error_result(
+        message="Boom",
+        code=server.ERROR_UNKNOWN,
+        category="demo",
+        details={"info": "example"},
+        start_time=0.0,
+        ctx=ctx,
+    )
+
+    structured = result["structuredContent"]
+    assert structured["message"] == "Boom"
+    assert structured["code"] == server.ERROR_UNKNOWN
+    hints = structured.get("hints", [])
+    assert any("LEAN_PROJECT_PATH" in hint for hint in hints)
+
+
 def test_rate_limited_enforces_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
     call_order: list[str] = []
 
@@ -100,7 +119,35 @@ def test_rate_limited_enforces_threshold(monkeypatch: pytest.MonkeyPatch) -> Non
     structured = result["structuredContent"]
     assert structured["code"] == server.ERROR_RATE_LIMIT
     assert structured["details"] == {"max_requests": 2, "per_seconds": 60}
-    assert "Limit: 2req/60s." in demo_tool.__doc__
+    assert "Rate limit: 2 requests every 60 seconds." in demo_tool.__doc__
 
     # Only two successful calls should be recorded
     assert call_order == ["ok", "ok"]
+
+
+def test_sanitize_path_label_within_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "src" / "Main.lean"
+    target.parent.mkdir()
+    target.touch()
+
+    label = server.sanitize_path_label(str(target))
+
+    assert label == "src/Main.lean"
+
+
+def test_sanitize_path_label_uses_project_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    target = project_root / "Subdir" / "Example.lean"
+    target.parent.mkdir(parents=True)
+    target.touch()
+
+    monkeypatch.setenv("LEAN_PROJECT_PATH", str(project_root))
+
+    label = server.sanitize_path_label(str(target))
+
+    assert label == "Subdir/Example.lean"
+
+
+def test_sanitize_path_label_invalid_input_returns_empty() -> None:
+    assert server.sanitize_path_label(object()) == ""

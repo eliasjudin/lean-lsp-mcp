@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pytest
+from types import SimpleNamespace
 
+import pytest
 from conftest import load_from_src
 
 schema = load_from_src("lean_lsp_mcp.schema")
@@ -23,6 +24,50 @@ def test_mcp_result_builds_structured_envelope():
 def test_mcp_result_requires_content():
     with pytest.raises(ValueError):
         schema.mcp_result(content=[])
+
+
+def test_mcp_result_requires_mapping_items():
+    with pytest.raises(TypeError):
+        schema.mcp_result(content=[{"type": "text", "text": "hello"}, "oops"])
+
+
+def test_mcp_result_requires_mapping_structured_payload():
+    with pytest.raises(TypeError):
+        schema.mcp_result(
+            content=[{"type": "text", "text": "hello"}],
+            structured=[("key", "value")],
+        )
+
+
+def test_mcp_result_requires_serializable_structured_payload():
+    with pytest.raises(TypeError):
+        schema.mcp_result(
+            content=[{"type": "text", "text": "hello"}],
+            structured={"value": set()},
+        )
+
+
+def test_mcp_result_accepts_generator_and_sets_error_flag():
+    def content_iter():
+        yield {"type": "text", "text": "edge"}
+
+    result = schema.mcp_result(content=content_iter(), is_error=True)
+
+    assert result["content"] == [{"type": "text", "text": "edge"}]
+    assert result["isError"] is True
+
+
+def test_mcp_result_structured_payload_is_copied():
+    structured = {"value": 3}
+
+    result = schema.mcp_result(
+        content=[{"type": "text", "text": "data"}],
+        structured=structured,
+    )
+
+    structured["value"] = 4
+
+    assert result["structuredContent"]["value"] == 3
 
 
 def test_success_result_builds_payload_without_meta():
@@ -67,6 +112,25 @@ def test_error_result_sets_code_and_category_without_meta():
     assert structured["details"] == {"info": "extra"}
     assert structured["hints"]
     assert "_meta" not in structured
+
+
+def test_success_result_omits_duplicate_summary_block():
+    result = server.success_result(
+        summary="done",
+        structured=None,
+        start_time=0.0,
+        ctx=None,
+        content=[
+            {"type": "text", "text": "done"},
+            {"type": "text", "text": "details"},
+        ],
+    )
+
+    texts = [item["text"] for item in result["content"] if item["type"] == "text"]
+
+    assert texts[0].startswith("**Summary:** done")
+    assert "done" not in texts[1:]
+    assert "details" in texts[1:]
 
 
 def test_success_result_truncates_and_emits_hint():
@@ -132,3 +196,28 @@ def test_error_result_json_format_includes_summary_meta():
     assert result["content"][0]["type"] == "resource"
     meta = result["structuredContent"].get("_meta")
     assert meta["summary"] == "Error: boom"
+
+
+def test_error_result_deduplicates_hints():
+    lifespan = SimpleNamespace(lean_project_path="/tmp/project", rate_limit={})
+    ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=lifespan))
+    derived_hint = server._derive_error_hints(
+        code=server.ERROR_CLIENT_NOT_READY,
+        category=None,
+        details={},
+        ctx=ctx,
+    )[0]
+
+    result = server.error_result(
+        message="client missing",
+        code=server.ERROR_CLIENT_NOT_READY,
+        category=None,
+        details=None,
+        hints=[derived_hint, derived_hint],
+        start_time=0.0,
+        ctx=ctx,
+    )
+
+    hints = result["structuredContent"]["hints"]
+
+    assert hints.count(derived_hint) == 1

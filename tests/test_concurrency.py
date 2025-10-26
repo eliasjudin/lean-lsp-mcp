@@ -73,4 +73,4 @@ def test_rate_limited_allows_positional_ctx(monkeypatch):
 
     assert tool(ctx, 3) == 6
     assert tool(ctx=ctx, value=4) == 8
-    assert tool.__doc__.startswith("Limit: 2req/60s.")
+    assert tool.__doc__.startswith("Rate limit: 2 requests every 60 seconds.")

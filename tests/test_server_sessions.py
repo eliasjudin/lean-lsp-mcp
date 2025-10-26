@@ -4,7 +4,6 @@ from threading import Lock
 from types import SimpleNamespace
 
 import pytest
-
 from conftest import load_from_src
 
 server = load_from_src("lean_lsp_mcp.server")
@@ -110,4 +109,4 @@ def test_open_file_session_handles_missing_dependency(monkeypatch):
     structured = payload["structuredContent"]
     assert structured["code"] == server.ERROR_CLIENT_NOT_READY
     assert structured["details"]["dependency"] == "leanclient"
-    assert message in structured["message"]
+    assert structured["message"].startswith("`leanclient` is not installed")

@@ -3,7 +3,6 @@ from threading import Lock
 from types import SimpleNamespace
 
 import pytest
-
 from conftest import load_from_src
 
 

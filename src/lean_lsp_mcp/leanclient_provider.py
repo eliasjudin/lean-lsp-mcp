@@ -1,8 +1,8 @@
-from __future__ import annotations
-
 """Helpers for working with the optional `leanclient` dependency."""
 
-from typing import Any, Tuple
+from __future__ import annotations
+
+from typing import Any, cast
 
 
 class LeanclientNotInstalledError(RuntimeError):
@@ -17,15 +17,18 @@ class LeanclientNotInstalledError(RuntimeError):
         super().__init__(message)
 
 
+_LeanLSPClient: type[Any] | None = None
+_DocumentContentChange: type[Any] | None = None
+_LEANCLIENT_IMPORT_ERROR: ModuleNotFoundError | None
+
 try:  # pragma: no cover - import guarded for missing optional dependency
-    from leanclient import DocumentContentChange as _DocumentContentChange
-    from leanclient import LeanLSPClient as _LeanLSPClient
+    from leanclient import DocumentContentChange, LeanLSPClient
 except ModuleNotFoundError as exc:  # pragma: no cover - runtime fallback when missing
-    _LEANCLIENT_IMPORT_ERROR: ModuleNotFoundError | None = exc
-    _LeanLSPClient = None  # type: ignore[assignment]
-    _DocumentContentChange = None  # type: ignore[assignment]
+    _LEANCLIENT_IMPORT_ERROR = exc
 else:  # pragma: no cover - exercised in environments with leanclient installed
     _LEANCLIENT_IMPORT_ERROR = None
+    _LeanLSPClient = cast(type[Any], LeanLSPClient)
+    _DocumentContentChange = cast(type[Any], DocumentContentChange)
 
 
 def is_leanclient_available() -> bool:
@@ -34,7 +37,7 @@ def is_leanclient_available() -> bool:
     return _LEANCLIENT_IMPORT_ERROR is None
 
 
-def ensure_leanclient_available() -> Tuple[type[Any], type[Any]]:
+def ensure_leanclient_available() -> tuple[type[Any], type[Any]]:
     """Return the `leanclient` classes, or raise if the dependency is missing."""
 
     if _LEANCLIENT_IMPORT_ERROR is not None or _LeanLSPClient is None or _DocumentContentChange is None:

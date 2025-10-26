@@ -9,7 +9,7 @@ from mcp.server.fastmcp.utilities.logging import get_logger
 
 from lean_lsp_mcp.file_utils import get_relative_file_path
 from lean_lsp_mcp.leanclient_provider import ensure_leanclient_available
-from lean_lsp_mcp.utils import StdoutToStderr
+from lean_lsp_mcp.utils import StdoutToStderr, log_event
 
 if TYPE_CHECKING:  # pragma: no cover - for type checkers only
     from leanclient import LeanLSPClient
@@ -18,7 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers only
 logger = get_logger(__name__)
 
 
-def startup_client(ctx: Context):
+def startup_client(ctx: Context) -> None:
     """Initialize and cache a Lean LSP client for the active project.
 
     Args:
@@ -62,20 +62,34 @@ def startup_client(ctx: Context):
                 client = LeanClientCls(
                     lean_project_path, initial_build=False, print_warnings=False
                 )
-                logger.info(
-                    "Connected to Lean language server at %s", lean_project_path
+                log_event(
+                    logger,
+                    level=20,
+                    message="Connected to Lean language server",
+                    ctx=ctx,
+                    project_path=lean_project_path,
                 )
             except Exception as e:
-                logger.warning(
-                    "Lean LSP startup without build failed, retrying with initial build: %s",
-                    e,
+                # Lazy import to avoid circular dependency
+                from lean_lsp_mcp.server_components.common import sanitize_exception
+                sanitized_error = sanitize_exception(e, fallback_reason="Lean LSP startup")
+                log_event(
+                    logger,
+                    level=30,
+                    message="Lean LSP startup without build failed, retrying with initial build",
+                    ctx=ctx,
+                    project_path=lean_project_path,
+                    error=sanitized_error,
                 )
                 client = LeanClientCls(
                     lean_project_path, initial_build=True, print_warnings=False
                 )
-                logger.info(
-                    "Connected to Lean language server after build at %s",
-                    lean_project_path,
+                log_event(
+                    logger,
+                    level=20,
+                    message="Connected to Lean language server after build",
+                    ctx=ctx,
+                    project_path=lean_project_path,
                 )
         lifespan.client = client
 
