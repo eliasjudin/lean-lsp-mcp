@@ -1,0 +1,62 @@
+<evaluation>
+  <qa_pair>
+    <question>
+      Assume the server is started with LEAN_PROJECT_PATH set to evaluations/lean_playground. Inspect EvalPlayground/Diagnostics/Broken.lean to locate the undefined helper used in mismatch, then run lean_diagnostic_messages for that file without restricting the range so the summary covers every diagnostic. What integer does structured.summary.count report?
+    </question>
+    <answer>3</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      Still in EvalPlayground/Diagnostics/Broken.lean, use lean_diagnostic_messages to examine the structured payload. Find the compact diagnostic entry that corresponds to the message mentioning ghostIncrement and read its s array. What zero-based line index appears as the first element of that array?
+    </question>
+    <answer>11</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      Open EvalPlayground/Proofs/Inequalities.lean and use lean_goal on the exact column of the sorry token in the example comparing Basics.double (a + b) with Basics.double a + Basics.double b. What is the first line of the rendered goal returned by the tool?
+    </question>
+    <answer>⊢ EvalPlayground.Basics.double (a + b) = EvalPlayground.Basics.double a + EvalPlayground.Basics.double b</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      In EvalPlayground/Diagnostics/Broken.lean place the cursor on the E of EvalPlayground.Basics.double inside the mismatch definition and call lean_term_goal. What rendered term goal string does the tool return?
+    </question>
+    <answer>⊢ Nat</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      Navigate to EvalPlayground/Navigation/Chain.lean and call lean_hover_info on the usage of Basics.triple within composed. What infoSnippet line is returned for that symbol?
+    </question>
+    <answer>EvalPlayground.Basics.triple : Nat → Nat</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      Using lean_file_contents to gather the definitions of Basics.double, Basics.triple, Basics.offset, and Navigation.handshake, substitute them step by step to determine the arithmetic value of Navigation.handshake 1 2. What number do you obtain?
+    </question>
+    <answer>20</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      Run lean_declaration_file for the symbol EvalPlayground.Navigation.composed using Navigation/Chain.lean as the source. What relative path does the tool report for the declaration file?
+    </question>
+    <answer>EvalPlayground/Navigation/Chain.lean</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      Call lean_tool_spec and focus on the entry for lean_loogle. What value is listed under rate_limit.max for that tool?
+    </question>
+    <answer>3</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      Use lean_loogle to search for the query Nat.succ_eq_add_one with the default number of results. What fully qualified name appears first in structured.names?
+    </question>
+    <answer>Nat.succ_eq_add_one</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>
+      Use lean_leansearch with the query Nat.sub_self. According to structured.names, what is the first result returned?
+    </question>
+    <answer>Nat.sub_self</answer>
+  </qa_pair>
+</evaluation>
