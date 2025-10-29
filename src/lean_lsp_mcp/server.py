@@ -17,7 +17,7 @@ from mcp.server.fastmcp.utilities.logging import get_logger, configure_logging
 from mcp.server.auth.settings import AuthSettings
 from leanclient import LeanLSPClient, DocumentContentChange
 
-from lean_lsp_mcp.client_utils import setup_client_for_file
+from lean_lsp_mcp.client_utils import setup_client_for_file, startup_client
 from lean_lsp_mcp.file_utils import get_file_contents, update_file
 from lean_lsp_mcp.instructions import INSTRUCTIONS
 from lean_lsp_mcp.search_utils import check_ripgrep_status, lean_local_search
@@ -584,6 +584,8 @@ def run_code(ctx: Context, code: str) -> List[str] | str:
     lean_project_path = ctx.request_context.lifespan_context.lean_project_path
     if lean_project_path is None:
         return "No valid Lean project path found. Run another tool (e.g. `lean_diagnostic_messages`) first to set it up or set the LEAN_PROJECT_PATH environment variable."
+
+    startup_client(ctx)
 
     rel_path = "temp_snippet.lean"
     abs_path = lean_project_path / rel_path
