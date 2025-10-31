@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import time
@@ -6,9 +7,10 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import urllib
-import json
+import orjson
 import functools
 import subprocess
+import uuid
 from pathlib import Path
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -16,7 +18,7 @@ from mcp.server.fastmcp.utilities.logging import get_logger, configure_logging
 from mcp.server.auth.settings import AuthSettings
 from leanclient import LeanLSPClient, DocumentContentChange
 
-from lean_lsp_mcp.client_utils import setup_client_for_file
+from lean_lsp_mcp.client_utils import setup_client_for_file, startup_client
 from lean_lsp_mcp.file_utils import get_file_contents, update_file
 from lean_lsp_mcp.instructions import INSTRUCTIONS
 from lean_lsp_mcp.search_utils import check_ripgrep_status, lean_local_search
@@ -66,6 +68,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
             rate_limit={
                 "leansearch": [],
                 "loogle": [],
+                "leanfinder": [],
                 "lean_state_search": [],
                 "hammer_premise": [],
             },
@@ -103,7 +106,14 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            rate_limit = kwargs["ctx"].request_context.lifespan_context.rate_limit
+            ctx = kwargs.get("ctx")
+            if ctx is None:
+                if not args:
+                    raise KeyError(
+                        "rate_limited wrapper requires ctx as a keyword argument or the first positional argument"
+                    )
+                ctx = args[0]
+            rate_limit = ctx.request_context.lifespan_context.rate_limit
             current_time = int(time.time())
             rate_limit[category] = [
                 timestamp
@@ -123,7 +133,9 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
 
 # Project level tools
 @mcp.tool("lean_build")
-def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) -> str:
+async def lsp_build(
+    ctx: Context, lean_project_path: str = None, clean: bool = False
+) -> str:
     """Build the Lean project and restart the LSP Server.
 
     Use only if needed (e.g. new imports).
@@ -141,10 +153,17 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) 
         lean_project_path_obj = Path(lean_project_path).resolve()
         ctx.request_context.lifespan_context.lean_project_path = lean_project_path_obj
 
+    if lean_project_path_obj is None:
+        return (
+            "Lean project path not known yet. Provide `lean_project_path` explicitly or call a "
+            "tool that infers it (e.g. `lean_goal`) before running `lean_build`."
+        )
+
     build_output = ""
     try:
         client: LeanLSPClient = ctx.request_context.lifespan_context.client
         if client:
+            ctx.request_context.lifespan_context.client = None
             client.close()
             ctx.request_context.lifespan_context.file_content_hashes.clear()
 
@@ -152,13 +171,65 @@ def lsp_build(ctx: Context, lean_project_path: str = None, clean: bool = False) 
             subprocess.run(["lake", "clean"], cwd=lean_project_path_obj, check=False)
             logger.info("Ran `lake clean`")
 
-        with OutputCapture() as output:
-            client = LeanLSPClient(lean_project_path_obj, initial_build=True)
+        # Fetch cache
+        subprocess.run(
+            ["lake", "exe", "cache", "get"], cwd=lean_project_path_obj, check=False
+        )
+
+        # Run build with progress reporting
+        process = await asyncio.create_subprocess_exec(
+            "lake",
+            "build",
+            "--verbose",
+            cwd=lean_project_path_obj,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        output_lines = []
+
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+
+            line_str = line.decode("utf-8", errors="replace").rstrip()
+            output_lines.append(line_str)
+
+            # Parse progress: look for pattern like "[2/8]" or "[10/100]"
+            match = re.search(r"\[(\d+)/(\d+)\]", line_str)
+            if match:
+                current_job = int(match.group(1))
+                total_jobs = int(match.group(2))
+
+                # Extract what's being built
+                # Line format: "ℹ [2/8] Built TestLeanBuild.Basic (1.6s)"
+                desc_match = re.search(
+                    r"\[\d+/\d+\]\s+(.+?)(?:\s+\(\d+\.?\d*[ms]+\))?$", line_str
+                )
+                description = desc_match.group(1) if desc_match else "Building"
+
+                # Report progress using dynamic totals from Lake
+                await ctx.report_progress(
+                    progress=current_job, total=total_jobs, message=description
+                )
+
+        await process.wait()
+
+        if process.returncode != 0:
+            build_output = "\n".join(output_lines)
+            raise Exception(f"Build failed with return code {process.returncode}")
+
+        # Start LSP client (without initial build since we just did it)
+        with OutputCapture():
+            client = LeanLSPClient(
+                lean_project_path_obj, initial_build=False, prevent_cache_get=True
+            )
 
         logger.info("Built project and re-started LSP client")
 
         ctx.request_context.lifespan_context.client = client
-        build_output = output.get_output()
+        build_output = "\n".join(output_lines)
         return build_output
     except Exception as e:
         return f"Error during build:\n{str(e)}\n{build_output}"
@@ -484,28 +555,37 @@ def multi_attempt(
     update_file(ctx, rel_path)
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
 
-    client.open_file(rel_path)
+    try:
+        client.open_file(rel_path)
 
-    results = []
-    snippets[0] += "\n"  # Extra newline for the first snippet
-    for snippet in snippets:
-        # Create a DocumentContentChange for the snippet
-        change = DocumentContentChange(
-            snippet + "\n",
-            [line - 1, 0],
-            [line, 0],
-        )
-        # Apply the change to the file, capture diagnostics and goal state
-        client.update_file(rel_path, [change])
-        diag = client.get_diagnostics(rel_path)
-        formatted_diag = "\n".join(format_diagnostics(diag, select_line=line - 1))
-        goal = client.get_goal(rel_path, line - 1, len(snippet))
-        formatted_goal = format_goal(goal, "Missing goal")
-        results.append(f"{snippet}:\n {formatted_goal}\n\n{formatted_diag}")
+        results = []
+        # Avoid mutating caller-provided snippets; normalize locally per attempt
+        for snippet in snippets:
+            snippet_str = snippet.rstrip("\n")
+            payload = f"{snippet_str}\n"
+            # Create a DocumentContentChange for the snippet
+            change = DocumentContentChange(
+                payload,
+                [line - 1, 0],
+                [line, 0],
+            )
+            # Apply the change to the file, capture diagnostics and goal state
+            client.update_file(rel_path, [change])
+            diag = client.get_diagnostics(rel_path)
+            formatted_diag = "\n".join(
+                format_diagnostics(diag, select_line=line - 1)
+            )
+            # Use the snippet text length without any trailing newline for the column
+            goal = client.get_goal(rel_path, line - 1, len(snippet_str))
+            formatted_goal = format_goal(goal, "Missing goal")
+            results.append(f"{snippet_str}:\n {formatted_goal}\n\n{formatted_diag}")
 
-    # Make sure it's clean after the attempts
-    client.close_files([rel_path])
-    return results
+        return results
+    finally:
+        try:
+            client.close_files([rel_path])
+        except Exception as exc:  # pragma: no cover - close failures only logged
+            logger.warning("Failed to close `%s` after multi_attempt: %s", rel_path, exc)
 
 
 @mcp.tool("lean_run_code")
@@ -521,11 +601,13 @@ def run_code(ctx: Context, code: str) -> List[str] | str:
     Returns:
         List[str] | str: Diagnostics msgs or error msg
     """
-    lean_project_path = ctx.request_context.lifespan_context.lean_project_path
+    lifespan_context = ctx.request_context.lifespan_context
+    lean_project_path = lifespan_context.lean_project_path
     if lean_project_path is None:
         return "No valid Lean project path found. Run another tool (e.g. `lean_diagnostic_messages`) first to set it up or set the LEAN_PROJECT_PATH environment variable."
 
-    rel_path = "temp_snippet.lean"
+    # Use a unique snippet filename to avoid collisions under concurrency
+    rel_path = f"_mcp_snippet_{uuid.uuid4().hex}.lean"
     abs_path = lean_project_path / rel_path
 
     try:
@@ -534,14 +616,44 @@ def run_code(ctx: Context, code: str) -> List[str] | str:
     except Exception as e:
         return f"Error writing code snippet to file `{abs_path}`:\n{str(e)}"
 
-    client: LeanLSPClient = ctx.request_context.lifespan_context.client
-    diagnostics = format_diagnostics(client.get_diagnostics(rel_path))
-    client.close_files([rel_path])
+    client: LeanLSPClient | None = lifespan_context.client
+    diagnostics: List[str] | str = []
+    close_error: str | None = None
+    remove_error: str | None = None
+    opened_file = False
 
     try:
-        os.remove(abs_path)
-    except Exception as e:
-        return f"Error removing temporary file `{abs_path}`:\n{str(e)}"
+        if client is None:
+            startup_client(ctx)
+            client = lifespan_context.client
+            if client is None:
+                return "Failed to initialize Lean client for run_code."
+
+        assert client is not None  # startup_client guarantees an initialized client
+        client.open_file(rel_path)
+        opened_file = True
+        diagnostics = format_diagnostics(client.get_diagnostics(rel_path))
+    finally:
+        if opened_file:
+            try:
+                client.close_files([rel_path])
+            except Exception as exc:  # pragma: no cover - close failures only logged
+                close_error = str(exc)
+                logger.warning("Failed to close `%s` after run_code: %s", rel_path, exc)
+        try:
+            os.remove(abs_path)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            remove_error = str(e)
+            logger.warning(
+                "Failed to remove temporary Lean snippet `%s`: %s", abs_path, e
+            )
+
+    if remove_error:
+        return f"Error removing temporary file `{abs_path}`:\n{remove_error}"
+    if close_error:
+        return f"Error closing temporary Lean document `{rel_path}`:\n{close_error}"
 
     return (
         diagnostics
@@ -599,9 +711,9 @@ def leansearch(ctx: Context, query: str, num_results: int = 5) -> List[Dict] | s
     """
     try:
         headers = {"User-Agent": "lean-lsp-mcp/0.1", "Content-Type": "application/json"}
-        payload = json.dumps(
+        payload = orjson.dumps(
             {"num_results": str(num_results), "query": [query]}
-        ).encode("utf-8")
+        )
 
         req = urllib.request.Request(
             "https://leansearch.net/search",
@@ -611,7 +723,7 @@ def leansearch(ctx: Context, query: str, num_results: int = 5) -> List[Dict] | s
         )
 
         with urllib.request.urlopen(req, timeout=20) as response:
-            results = json.loads(response.read().decode("utf-8"))
+            results = orjson.loads(response.read())
 
         if not results or not results[0]:
             return "No results found."
@@ -657,17 +769,90 @@ def loogle(ctx: Context, query: str, num_results: int = 8) -> List[dict] | str:
         )
 
         with urllib.request.urlopen(req, timeout=20) as response:
-            results = json.loads(response.read().decode("utf-8"))
+            results = orjson.loads(response.read())
 
         if "hits" not in results:
             return "No results found."
 
         results = results["hits"][:num_results]
         for result in results:
-            result.pop("doc")
+            result.pop("doc", None)
         return results
     except Exception as e:
         return f"loogle error:\n{str(e)}"
+
+
+@mcp.tool("lean_leanfinder")
+@rate_limited("leanfinder", max_requests=10, per_seconds=30)
+def leanfinder(
+    ctx: Context, query: str, num_results: int = 5
+) -> List[tuple] | str:
+    """Search Mathlib theorems/definitions semantically by mathematical concept using Lean Finder.
+
+    Effective query types:
+    - Math + API: "setAverage Icc interval", "integral_pow symmetric bounds"
+    - Conceptual: "algebraic elements same minimal polynomial", "quadrature nodes"
+    - Structure: "Finset expect sum commute", "polynomial degree bounded eval"
+    - Natural: "average equals point values", "root implies equal polynomials"
+
+    Tips: Mix informal math terms with Lean identifiers. Multiple targeted queries beat one complex query.
+
+    Args:
+        query (str): Mathematical concepts combined with Lean terms
+        num_results (int, optional): Max results. Defaults to 5.
+
+    Returns:
+        List[tuple] | str: (lean_statement, english_description) pairs or error
+    """
+    try:
+        headers = {"User-Agent": "lean-lsp-mcp/0.1", "Content-Type": "application/json"}
+        payload = orjson.dumps({"data": [query, num_results, "Normal"]})
+
+        req = urllib.request.Request(
+            "https://delta-lab-ai-lean-finder.hf.space/gradio_api/call/retrieve",
+            data=payload,
+            headers=headers,
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            event_data = orjson.loads(response.read())
+            event_id = event_data.get("event_id")
+
+        if not event_id:
+            return "Lean Finder has timed out or errored. It might be warming up, try a second time in 2 minutes."
+
+        result_url = f"https://delta-lab-ai-lean-finder.hf.space/gradio_api/call/retrieve/{event_id}"
+        req = urllib.request.Request(result_url, headers=headers, method="GET")
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            for line in response:
+                line = line.decode("utf-8").strip()
+                if line.startswith("data: "):
+                    data = orjson.loads(line[6:])
+                    if isinstance(data, list) and len(data) > 0:
+                        html = data[0] if isinstance(data[0], str) else str(data)
+
+                        # Parse HTML table rows
+                        rows = re.findall(
+                            r"<tr><td>\d+</td><td>(.*?)</td><td>(.*?)</td></tr>",
+                            html, re.DOTALL
+                        )
+                        results = []
+                        for formal_cell, informal_cell in rows:
+                            formal = re.search(r"<code[^>]*>(.*?)</code>", formal_cell, re.DOTALL)
+                            informal = re.search(r"<span[^>]*>(.*?)</span>", informal_cell, re.DOTALL)
+                            if formal:
+                                results.append((
+                                    formal.group(1).strip(),
+                                    informal.group(1).strip() if informal else ""
+                                ))
+
+                        return results if results else "Lean Finder: No results parsed"
+
+        return "Lean Finder: No results received"
+    except Exception as e:
+        return f"Lean Finder Error:\n{str(e)}"
 
 
 @mcp.tool("lean_state_search")
@@ -711,7 +896,7 @@ def state_search(
         )
 
         with urllib.request.urlopen(req, timeout=20) as response:
-            results = json.loads(response.read().decode("utf-8"))
+            results = orjson.loads(response.read())
 
         for result in results:
             result.pop("rev")
@@ -765,11 +950,11 @@ def hammer_premise(
                 "Content-Type": "application/json",
             },
             method="POST",
-            data=json.dumps(data).encode("utf-8"),
+            data=orjson.dumps(data),
         )
 
         with urllib.request.urlopen(req, timeout=20) as response:
-            results = json.loads(response.read().decode("utf-8"))
+            results = orjson.loads(response.read())
 
         results = [result["name"] for result in results]
         results.insert(0, f"Results for line:\n{f_line}")
