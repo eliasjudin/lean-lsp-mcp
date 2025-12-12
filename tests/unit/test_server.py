@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import types
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -170,3 +171,33 @@ def test_local_search_requires_project_root_when_unset(
         server.local_search(ctx=ctx, query="foo", project_root=str(missing_path))
 
     assert "does not exist" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_leansearch_reports_awaiting_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _make_ctx(rate_limit={"leansearch": []})
+    ctx.report_progress = AsyncMock()
+
+    fake_results = [
+        [
+            {
+                "result": {
+                    "name": ["Foo"],
+                    "module_name": ["Bar"],
+                    "kind": "theorem",
+                    "type": "Nat",
+                }
+            }
+        ]
+    ]
+    monkeypatch.setattr(server, "_urlopen_json", AsyncMock(return_value=fake_results))
+
+    await server.leansearch(ctx=ctx, query="foo", num_results=1)
+
+    ctx.report_progress.assert_awaited()
+    kwargs = ctx.report_progress.await_args.kwargs
+    assert kwargs["progress"] == 1
+    assert kwargs["total"] == 10
+    assert "leansearch.net" in kwargs["message"]

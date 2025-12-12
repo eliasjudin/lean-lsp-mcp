@@ -98,6 +98,23 @@ logger = get_logger(__name__)
 _RG_AVAILABLE, _RG_MESSAGE = check_ripgrep_status()
 
 
+async def _report_awaiting_response(
+    ctx: Context, source: str, progress: int = 1, total: int = 10
+) -> None:
+    """Best-effort progress update for async requests."""
+    report = getattr(ctx, "report_progress", None)
+    if report is None:
+        return
+    try:
+        await report(
+            progress=progress,
+            total=total,
+            message=f"Awaiting response from {source}",
+        )
+    except Exception as exc:
+        logger.debug("Failed to report progress: %s", exc)
+
+
 @dataclass
 class AppContext:
     lean_project_path: Path | None
@@ -982,6 +999,7 @@ async def leansearch(
         method="POST",
     )
 
+    await _report_awaiting_response(ctx, "leansearch.net")
     results = await _urlopen_json(req, timeout=20)
 
     if not results or not results[0]:
@@ -1026,6 +1044,7 @@ async def loogle(
     # Try local loogle first if available (no rate limiting)
     if app_ctx.loogle_local_available and app_ctx.loogle_manager:
         try:
+            await _report_awaiting_response(ctx, "local loogle")
             results = await app_ctx.loogle_manager.query(query, num_results)
             if not results:
                 return "No results found."
@@ -1049,6 +1068,7 @@ async def loogle(
         return "Rate limit exceeded: 3 requests per 30s. Use --loogle-local to avoid limits."
     rate_limit.append(now)
 
+    await _report_awaiting_response(ctx, "loogle.lean-lang.org")
     result = await asyncio.to_thread(loogle_remote, query, num_results)
     if isinstance(result, str):
         return result  # Error message
@@ -1083,11 +1103,11 @@ async def leanfinder(
     )
 
     results: List[LeanFinderResult] = []
+    await _report_awaiting_response(ctx, "Lean Finder")
     data = await _urlopen_json(req, timeout=30)
     for result in data["results"]:
         if (
-            "https://leanprover-community.github.io/mathlib4_docs"
-            not in result["url"]
+            "https://leanprover-community.github.io/mathlib4_docs" not in result["url"]
         ):  # Only include mathlib4 results
             continue
         match = re.search(r"pattern=(.*?)#doc", result["url"])
@@ -1145,6 +1165,7 @@ async def state_search(
         method="GET",
     )
 
+    await _report_awaiting_response(ctx, urllib.parse.urlparse(url).netloc or url)
     results = await _urlopen_json(req, timeout=20)
 
     items = [StateSearchResult(name=r["name"]) for r in results]
@@ -1204,6 +1225,7 @@ async def hammer_premise(
         data=orjson.dumps(data),
     )
 
+    await _report_awaiting_response(ctx, urllib.parse.urlparse(url).netloc or url)
     results = await _urlopen_json(req, timeout=20)
 
     items = [PremiseResult(name=r["name"]) for r in results]
