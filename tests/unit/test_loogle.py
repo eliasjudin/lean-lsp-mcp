@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -246,12 +247,23 @@ class TestLoogleIntegration:
     """
 
     @pytest.mark.asyncio
-    async def test_local_loogle_full_workflow(self, tmp_path):
+    async def test_local_loogle_full_workflow(self, tmp_path, monkeypatch):
         """Test the complete workflow: install, start, query, stop."""
         import shutil
 
         if not shutil.which("git") or not shutil.which("lake"):
             pytest.skip("git and lake required for integration test")
+
+        # In restricted/sandboxed environments, ELAN_HOME may not be writable.
+        # Use a temp ELAN_HOME so toolchain installs can proceed.
+        elan_home = Path(os.environ.get("ELAN_HOME", Path.home() / ".elan"))
+        toolchains_dir = elan_home / "toolchains"
+        if (toolchains_dir.exists() and not os.access(toolchains_dir, os.W_OK)) or (
+            not toolchains_dir.exists()
+            and elan_home.exists()
+            and not os.access(elan_home, os.W_OK)
+        ):
+            monkeypatch.setenv("ELAN_HOME", str(tmp_path / "elan"))
 
         mgr = LoogleManager(cache_dir=tmp_path / "loogle")
 
