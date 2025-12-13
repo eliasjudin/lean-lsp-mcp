@@ -293,6 +293,21 @@ if os.environ.get("LEAN_LSP_TEST_MODE") == "1":
         """Internal test tool for validating rate-limited error propagation."""
         return "ok"
 
+    @mcp.tool(
+        "_test_urlopen_json_invalid",
+        annotations=ToolAnnotations(
+            title="Test Invalid JSON (Internal)",
+            readOnlyHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+    async def test_urlopen_json_invalid(ctx: Context) -> str:
+        """Internal test tool for validating tool error propagation."""
+        req = urllib.request.Request("data:,not-json", method="GET")
+        await _urlopen_json(req, timeout=1)
+        return "unreachable"
+
 
 @mcp.tool(
     "lean_build",
