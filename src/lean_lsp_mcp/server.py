@@ -238,9 +238,10 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
                 ctx = args[0]
             rate_limit = ctx.request_context.lifespan_context.rate_limit
             current_time = int(time.time())
+            prior_timestamps = rate_limit.setdefault(category, [])
             rate_limit[category] = [
                 timestamp
-                for timestamp in rate_limit[category]
+                for timestamp in prior_timestamps
                 if timestamp > current_time - per_seconds
             ]
             if len(rate_limit[category]) >= max_requests:
@@ -274,6 +275,23 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
         return wrapper
 
     return decorator
+
+
+if os.environ.get("LEAN_LSP_TEST_MODE") == "1":
+
+    @mcp.tool(
+        "_test_rate_limited",
+        annotations=ToolAnnotations(
+            title="Test Rate Limited (Internal)",
+            readOnlyHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+    @rate_limited("_test_rate_limited", max_requests=1, per_seconds=60)
+    async def test_rate_limited(ctx: Context) -> str:
+        """Internal test tool for validating rate-limited error propagation."""
+        return "ok"
 
 
 @mcp.tool(
