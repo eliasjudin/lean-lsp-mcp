@@ -108,7 +108,10 @@ def _configure_env(
         run_calls.append((cmd, cwd))
         if expected_cwd is not None and cmd and cmd[0] == "rg":
             assert cwd == expected_cwd
-        if cmd[:2] == ["lean", "--print-prefix"]:
+        if cmd[:4] == ["lake", "env", "lean", "--print-prefix"] or cmd[:2] == [
+            "lean",
+            "--print-prefix",
+        ]:
             return lean_completed
         return completed
 

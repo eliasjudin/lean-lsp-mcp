@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import socket
 import time
 from typing import Annotated, List, Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -78,8 +79,30 @@ async def _urlopen_bytes(req: urllib.request.Request, timeout: float) -> bytes:
     """Run urllib.request.urlopen in a worker thread to avoid blocking the event loop."""
 
     def _do_request() -> bytes:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            return response.read()
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                status = getattr(response, "status", None) or response.getcode()
+                if status is not None and not (200 <= status < 300):
+                    raise LeanToolError(
+                        f"Request failed ({status}) for {getattr(req, 'full_url', '<unknown url>')}"
+                    )
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                body = exc.read(2_000)
+                if body:
+                    detail = body.decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            msg = f"Request failed ({exc.code}) for {getattr(req, 'full_url', '<unknown url>')}"
+            if detail:
+                msg = f"{msg}\n{detail}"
+            raise LeanToolError(msg) from None
+        except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            raise LeanToolError(
+                f"Request failed for {getattr(req, 'full_url', '<unknown url>')}: {exc}"
+            ) from None
 
     return await asyncio.to_thread(_do_request)
 
@@ -87,7 +110,12 @@ async def _urlopen_bytes(req: urllib.request.Request, timeout: float) -> bytes:
 async def _urlopen_json(req: urllib.request.Request, timeout: float) -> Any:
     """Fetch JSON via urllib in a thread and decode with orjson."""
     raw = await _urlopen_bytes(req, timeout=timeout)
-    return orjson.loads(raw)
+    try:
+        return orjson.loads(raw)
+    except orjson.JSONDecodeError as exc:
+        raise LeanToolError(
+            f"Invalid JSON response from {getattr(req, 'full_url', '<unknown url>')}: {exc}"
+        ) from None
 
 
 _LOG_LEVEL = os.environ.get("LEAN_LOG_LEVEL", "INFO")
@@ -106,11 +134,15 @@ async def _report_awaiting_response(
     if report is None:
         return
     try:
-        await report(
+        result = report(
             progress=progress,
             total=total,
             message=f"Awaiting response from {source}",
         )
+        if asyncio.iscoroutine(result):
+            await asyncio.wait_for(result, timeout=0.5)
+    except asyncio.TimeoutError:
+        logger.debug("Timed out reporting progress")
     except Exception as exc:
         logger.debug("Failed to report progress: %s", exc)
 
@@ -225,7 +257,7 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
             async def wrapper(*args, **kwargs):
                 allowed, msg = _apply_rate_limit(args, kwargs)
                 if not allowed:
-                    return msg
+                    raise LeanToolError(msg)
                 return await func(*args, **kwargs)
 
         else:
@@ -234,7 +266,7 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
             def wrapper(*args, **kwargs):
                 allowed, msg = _apply_rate_limit(args, kwargs)
                 if not allowed:
-                    return msg
+                    raise LeanToolError(msg)
                 return func(*args, **kwargs)
 
         doc = wrapper.__doc__ or ""

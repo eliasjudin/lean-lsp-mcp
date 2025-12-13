@@ -96,8 +96,9 @@ def test_rate_limited_blocks_excess(monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _make_ctx()
     assert wrapped(ctx=ctx) == "ok"
     assert wrapped(ctx=ctx) == "ok"
-    message = wrapped(ctx=ctx)
-    assert "Tool limit exceeded" in message
+    with pytest.raises(server.LeanToolError) as exc_info:
+        wrapped(ctx=ctx)
+    assert "Tool limit exceeded" in str(exc_info.value)
 
 
 def test_rate_limited_trims_expired(monkeypatch: pytest.MonkeyPatch) -> None:

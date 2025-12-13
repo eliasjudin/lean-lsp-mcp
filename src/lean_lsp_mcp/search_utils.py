@@ -81,7 +81,7 @@ def lean_local_search(
         str(root),
     ]
 
-    if lean_src := _get_lean_src_search_path():
+    if lean_src := _get_lean_src_search_path(root):
         command.append(lean_src)
 
     result = subprocess.run(command, capture_output=True, text=True, cwd=str(root))
@@ -121,22 +121,33 @@ def lean_local_search(
     return matches
 
 
-@lru_cache(maxsize=1)
-def _get_lean_src_search_path() -> str | None:
+@lru_cache(maxsize=8)
+def _get_lean_src_search_path(project_root: Path) -> str | None:
     """Return the Lean stdlib directory, if available (cache once)."""
-    try:
-        completed = subprocess.run(
-            ["lean", "--print-prefix"], capture_output=True, text=True
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
 
-    prefix = completed.stdout.strip()
-    if not prefix:
-        return None
+    def _try_prefix(cmd: list[str], cwd: Path | None) -> str | None:
+        try:
+            completed = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(cwd) if cwd is not None else None,
+            )
+        except FileNotFoundError:
+            return None
 
-    candidate = Path(prefix).expanduser().resolve() / "src"
-    if candidate.exists():
-        return str(candidate)
+        if completed.returncode != 0:
+            return None
 
-    return None
+        prefix = completed.stdout.strip()
+        if not prefix:
+            return None
+
+        candidate = Path(prefix).expanduser().resolve() / "src"
+        return str(candidate) if candidate.exists() else None
+
+    # Prefer `lake env` in the project root (honors lean-toolchain); fall back to
+    # the default `lean` toolchain if needed.
+    return _try_prefix(
+        ["lake", "env", "lean", "--print-prefix"], project_root
+    ) or _try_prefix(["lean", "--print-prefix"], None)
