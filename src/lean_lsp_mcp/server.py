@@ -140,7 +140,16 @@ async def _report_awaiting_response(
             message=f"Awaiting response from {source}",
         )
         if asyncio.iscoroutine(result):
-            await asyncio.wait_for(result, timeout=0.5)
+            task = asyncio.create_task(result)
+
+            def _swallow(task: asyncio.Task[object]) -> None:
+                try:
+                    task.result()
+                except Exception as exc:
+                    logger.debug("Failed to report progress: %s", exc)
+
+            task.add_done_callback(_swallow)
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
     except asyncio.TimeoutError:
         logger.debug("Timed out reporting progress")
     except Exception as exc:
@@ -173,7 +182,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         if os.environ.get("LEAN_LOOGLE_LOCAL", "").lower() in ("1", "true", "yes"):
             logger.info("Local loogle enabled, initializing...")
             loogle_manager = LoogleManager()
-            if loogle_manager.ensure_installed():
+            if await asyncio.to_thread(loogle_manager.ensure_installed):
                 if await loogle_manager.start():
                     loogle_local_available = True
                     logger.info("Local loogle started successfully")
@@ -990,7 +999,7 @@ class LocalSearchError(Exception):
         openWorldHint=False,
     ),
 )
-def local_search(
+async def local_search(
     ctx: Context,
     query: Annotated[str, Field(description="Declaration name or prefix")],
     limit: Annotated[int, Field(description="Max matches", ge=1)] = 10,
@@ -1022,8 +1031,11 @@ def local_search(
         )
 
     try:
-        raw_results = lean_local_search(
-            query=query.strip(), limit=limit, project_root=resolved_root
+        raw_results = await asyncio.to_thread(
+            lean_local_search,
+            query=query.strip(),
+            limit=limit,
+            project_root=resolved_root,
         )
         results = [
             LocalSearchResult(name=r["name"], kind=r["kind"], file=r["file"])
