@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, AsyncIterator, Iterable, Sequence
+from typing import Any, AsyncIterator, Iterable
 
 from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import (
     CallToolResult,
     ContentBlock,
@@ -39,8 +39,6 @@ class MCPClient:
         self._session = session
 
     async def list_tools(self) -> list[str]:
-        """Return the tool names exposed by the server."""
-
         result = await self._session.list_tools()
         return [tool.name for tool in result.tools]
 
@@ -51,8 +49,6 @@ class MCPClient:
         *,
         expect_error: bool = False,
     ) -> CallToolResult:
-        """Call a tool and optionally assert success."""
-
         result = await self._session.call_tool(name, arguments or {})
         if result.isError and not expect_error:
             raise MCPToolError(name, result)
@@ -60,22 +56,29 @@ class MCPClient:
 
 
 @asynccontextmanager
-async def connect_stdio_client(
-    command: str,
-    args: Sequence[str],
+async def connect_streamable_http_client(
+    url: str,
     *,
-    env: dict[str, str] | None = None,
-    cwd: Path | None = None,
+    headers: dict[str, str] | None = None,
 ) -> AsyncIterator[MCPClient]:
-    """Spawn the MCP server over stdio and yield an :class:`MCPClient`."""
+    async with streamablehttp_client(url, headers=headers) as (
+        read_stream,
+        write_stream,
+        _,
+    ):
+        session = ClientSession(read_stream, write_stream)
+        async with session:
+            await session.initialize()
+            yield MCPClient(session)
 
-    server = StdioServerParameters(
-        command=command,
-        args=list(args),
-        env=env,
-        cwd=str(cwd) if cwd is not None else None,
-    )
-    async with stdio_client(server) as (read_stream, write_stream):
+
+@asynccontextmanager
+async def connect_sse_client(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> AsyncIterator[MCPClient]:
+    async with sse_client(url, headers=headers) as (read_stream, write_stream):
         session = ClientSession(read_stream, write_stream)
         async with session:
             await session.initialize()
@@ -83,8 +86,6 @@ async def connect_stdio_client(
 
 
 def result_text(result: CallToolResult) -> str:
-    """Join all text fragments from a tool result into a single string."""
-
     segments: list[str] = []
     for block in result.content:
         segments.extend(_text_from_block(block))
@@ -92,7 +93,6 @@ def result_text(result: CallToolResult) -> str:
 
 
 def result_json(result: CallToolResult) -> dict[str, Any]:
-    """Parse tool result as JSON dict."""
     return json.loads(result_text(result))
 
 

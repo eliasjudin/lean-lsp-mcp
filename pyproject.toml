@@ -6,7 +6,13 @@ authors = [{ name = "Oliver Dressler", email = "hey@oli.show" }]
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-dependencies = ["leanclient==0.9.2", "mcp[cli]==1.25.0", "orjson>=3.11.1", "certifi>=2024.0.0"]
+dependencies = [
+    "leanclient==0.9.2",
+    "mcp[cli]==1.25.0",
+    "orjson>=3.11.1",
+    "certifi>=2024.0.0",
+    "PyJWT[crypto]>=2.9.0",
+]
 
 [project.urls]
 Repository = "https://github.com/oOo0oOo/lean-lsp-mcp"
@@ -25,10 +31,15 @@ exclude = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
+testpaths = ["tests/v2"]
+norecursedirs = ["lean-lsp-mcp", ".git", ".venv"]
+pythonpath = ["src"]
 
 [tool.setuptools]
-packages = ["lean_lsp_mcp"]
 package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
