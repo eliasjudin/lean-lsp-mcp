@@ -35,10 +35,7 @@ def multiAttemptTarget : Nat := 0
 """
 
 LAKE_UPDATE: Final[Sequence[str]] = ("lake", "update", "--keep-toolchain")
-LAKE_BUILD_STEPS: Final[tuple[Sequence[str], ...]] = (
-    ("lake", "exe", "cache", "get"),
-    ("lake", "build"),
-)
+LAKE_BUILD_STEPS: Final[tuple[Sequence[str], ...]] = (("lake", "build"),)
 
 
 def ensure_test_project(repo_root: Path) -> Path:
@@ -53,7 +50,7 @@ def ensure_test_project(repo_root: Path) -> Path:
 
     # Optional heavyweight setup for environments that need prebuilt Lake artifacts.
     # Disabled by default to keep local/CI MCP tests fast and deterministic.
-    if _prepare_lake_requested() and _should_refresh(project_root):
+    if _prepare_lake_requested():
         _run_lake_steps(project_root)
 
     return project_root
@@ -63,11 +60,6 @@ def _write_if_changed(path: Path, content: str) -> None:
     if path.exists() and path.read_text() == content:
         return
     path.write_text(content)
-
-
-def _should_refresh(project_root: Path) -> bool:
-    olean_dir = project_root / ".lake" / "build"
-    return not olean_dir.exists()
 
 
 def _prepare_lake_requested() -> bool:
