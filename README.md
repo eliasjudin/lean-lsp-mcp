@@ -11,6 +11,7 @@ Remote-first Lean MCP server for OpenAI Responses/connector workflows.
 - Tool exposure is split by profile (`read` vs `write`).
 
 Migration details: [MIGRATION.md](MIGRATION.md)
+Release notes: [CHANGELOG.md](CHANGELOG.md)
 
 ## Why this shape
 
@@ -21,6 +22,20 @@ This server follows OpenAI MCP guidance for connector/deep-research compatibilit
 - Deployment docs include trust boundaries and approval controls for remote MCP servers ([Connectors and MCP servers](https://platform.openai.com/docs/guides/tools-connectors-mcp#approvals)).
 
 ## Install
+
+### Users
+
+Install from PyPI:
+
+```bash
+uv tool install lean-lsp-mcp
+# or
+pip install lean-lsp-mcp
+```
+
+### Developers
+
+Clone this repo and install dev dependencies:
 
 ```bash
 uv sync --extra dev
@@ -63,6 +78,18 @@ export LEAN_ALLOW_NO_AUTH=true
 export LEAN_AUTH_MODE=none
 ```
 
+## CLI flags and env overrides
+
+The following CLI flags are currently supported and map to environment configuration:
+
+| CLI flag | Behavior | Env mapping and related toggles |
+| --- | --- | --- |
+| `--auth-mode {none,oauth,bearer,oauth_and_bearer,mixed}` | Overrides authentication mode. | Sets `LEAN_AUTH_MODE`. Related: `LEAN_ALLOW_NO_AUTH`, `LEAN_OAUTH_ISSUER_URL`, `LEAN_OAUTH_RESOURCE_SERVER_URL`, `LEAN_OAUTH_REQUIRED_SCOPES`, `LEAN_LSP_MCP_TOKEN`. |
+| `--loogle-local` | Enables local loogle backend (instead of remote API). | Sets `LEAN_LOOGLE_LOCAL=true`. Related: `LEAN_ENABLE_LOOGLE` to disable loogle tool entirely. |
+| `--loogle-cache-dir <path>` | Overrides local loogle cache directory. | Sets `LEAN_LOOGLE_CACHE_DIR`. Default is `$XDG_CACHE_HOME/lean-lsp-mcp/loogle` or `~/.cache/lean-lsp-mcp/loogle`. |
+| `--repl` | Enables REPL-based `multi_attempt` path. | Sets `LEAN_REPL=true`. Related: `LEAN_REPL_PATH` (binary override), `LEAN_REPL_MEM_MB` (memory cap). |
+| `--repl-timeout <seconds>` | Sets REPL command timeout. | Sets `LEAN_REPL_TIMEOUT` (default: `60`). |
+
 ## Run the server
 
 Read profile:
@@ -83,6 +110,19 @@ SSE transport:
 ```bash
 uv run python -m lean_lsp_mcp --transport sse --profile read
 # http://127.0.0.1:8000/sse
+```
+
+With auth/local-loogle/REPL overrides:
+
+```bash
+uv run python -m lean_lsp_mcp \
+  --transport streamable-http \
+  --profile write \
+  --auth-mode mixed \
+  --loogle-local \
+  --loogle-cache-dir /tmp/lean-lsp-mcp-loogle \
+  --repl \
+  --repl-timeout 90
 ```
 
 ## Tool surface
@@ -210,8 +250,11 @@ External web-backed tools are enabled by default. Disable with:
 
 ## Development
 
-Run tests:
+Run lint + tests:
 
 ```bash
-uv run --extra dev python -m pytest -q
+uv sync --extra dev
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+uv run pytest tests/mcp/ -v
 ```
