@@ -125,7 +125,7 @@ class RunResult(BaseModel):
 
 
 class DeclarationInfo(BaseModel):
-    file_path: str = Field(description="Path to declaration file")
+    path: str = Field(description="Workspace-relative path to declaration file")
     content: str = Field(description="File content")
 
 

@@ -1,3 +1,1 @@
-import Mathlib
-
-abbrev sampleValue : ℕ := 42
+abbrev sampleValue : Nat := 42

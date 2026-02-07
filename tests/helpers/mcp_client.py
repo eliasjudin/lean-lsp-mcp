@@ -5,9 +5,15 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Iterable
 
+import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+
+try:
+    from mcp.client.streamable_http import streamable_http_client
+except ImportError:  # mcp<1.26 compatibility
+    streamable_http_client = None  # type: ignore[assignment]
 from mcp.types import (
     CallToolResult,
     ContentBlock,
@@ -35,12 +41,23 @@ class MCPToolError(MCPClientError):
 class MCPClient:
     """Lightweight helper around :class:`mcp.client.session.ClientSession`."""
 
-    def __init__(self, session: ClientSession) -> None:
+    def __init__(self, session: ClientSession, *, endpoint: str | None = None) -> None:
         self._session = session
+        self.endpoint = endpoint
+        if endpoint and endpoint.endswith("/mcp"):
+            self.base_url = endpoint[: -len("/mcp")]
+        elif endpoint and endpoint.endswith("/sse"):
+            self.base_url = endpoint[: -len("/sse")]
+        else:
+            self.base_url = endpoint
 
     async def list_tools(self) -> list[str]:
         result = await self._session.list_tools()
         return [tool.name for tool in result.tools]
+
+    async def list_tools_full(self):
+        result = await self._session.list_tools()
+        return list(result.tools)
 
     async def call_tool(
         self,
@@ -61,15 +78,34 @@ async def connect_streamable_http_client(
     *,
     headers: dict[str, str] | None = None,
 ) -> AsyncIterator[MCPClient]:
-    async with streamablehttp_client(url, headers=headers) as (
-        read_stream,
-        write_stream,
-        _,
-    ):
-        session = ClientSession(read_stream, write_stream)
-        async with session:
-            await session.initialize()
-            yield MCPClient(session)
+    if streamable_http_client is None:
+        async with streamablehttp_client(url, headers=headers) as (
+            read_stream,
+            write_stream,
+            _,
+        ):
+            session = ClientSession(read_stream, write_stream)
+            async with session:
+                await session.initialize()
+                yield MCPClient(session, endpoint=url)
+        return
+
+    http_client: httpx.AsyncClient | None = None
+    if headers:
+        http_client = httpx.AsyncClient(headers=headers)
+    try:
+        async with streamable_http_client(url, http_client=http_client) as (
+            read_stream,
+            write_stream,
+            _,
+        ):
+            session = ClientSession(read_stream, write_stream)
+            async with session:
+                await session.initialize()
+                yield MCPClient(session, endpoint=url)
+    finally:
+        if http_client is not None:
+            await http_client.aclose()
 
 
 @asynccontextmanager
@@ -82,7 +118,7 @@ async def connect_sse_client(
         session = ClientSession(read_stream, write_stream)
         async with session:
             await session.initialize()
-            yield MCPClient(session)
+            yield MCPClient(session, endpoint=url)
 
 
 def result_text(result: CallToolResult) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Final, Sequence
@@ -13,18 +14,24 @@ LAKEFILE_TOML: Final[str] = """name = \"McpTestProject\"
 version = \"0.1.0\"
 defaultTargets = [\"McpTestProject\"]
 
-[[require]]
-name = \"mathlib\"
-scope = \"leanprover-community\"
-rev = \"v4.25.0\"
-
 [[lean_lib]]
 name = \"McpTestProject\"
 """
 
-LIB_MAIN_LEAN: Final[str] = """import Mathlib
+LIB_MAIN_LEAN: Final[str] = """abbrev sampleValue : Nat := 42
+"""
 
-abbrev sampleValue : ℕ := 42
+EDITOR_TOOLS_LEAN: Final[str] = """def sampleValue : Nat := 42
+
+theorem sampleTheorem : True := by
+  trivial
+
+def completionTest : Nat := Nat.su
+"""
+
+MISC_TOOLS_LEAN: Final[str] = """def miscValue : Nat := 0
+
+def multiAttemptTarget : Nat := 0
 """
 
 LAKE_UPDATE: Final[Sequence[str]] = ("lake", "update", "--keep-toolchain")
@@ -41,10 +48,12 @@ def ensure_test_project(repo_root: Path) -> Path:
     _write_if_changed(project_root / "lean-toolchain", LEAN_TOOLCHAIN)
     _write_if_changed(project_root / "lakefile.toml", LAKEFILE_TOML)
     _write_if_changed(project_root / "McpTestProject.lean", LIB_MAIN_LEAN)
+    _write_if_changed(project_root / "EditorTools.lean", EDITOR_TOOLS_LEAN)
+    _write_if_changed(project_root / "MiscTools.lean", MISC_TOOLS_LEAN)
 
-    should_run_setup = _should_refresh(project_root)
-
-    if should_run_setup:
+    # Optional heavyweight setup for environments that need prebuilt Lake artifacts.
+    # Disabled by default to keep local/CI MCP tests fast and deterministic.
+    if _prepare_lake_requested() and _should_refresh(project_root):
         _run_lake_steps(project_root)
 
     return project_root
@@ -57,9 +66,17 @@ def _write_if_changed(path: Path, content: str) -> None:
 
 
 def _should_refresh(project_root: Path) -> bool:
-    mathlib_dir = project_root / ".lake" / "packages" / "mathlib"
     olean_dir = project_root / ".lake" / "build"
-    return not mathlib_dir.exists() or not olean_dir.exists()
+    return not olean_dir.exists()
+
+
+def _prepare_lake_requested() -> bool:
+    return os.environ.get("LEAN_E2E_PREPARE_LAKE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _run_lake_steps(project_root: Path) -> None:
