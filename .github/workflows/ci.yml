@@ -26,4 +26,5 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --extra dev
-      - run: uv run pytest tests/unit/ -v
+      - run: uv run pytest tests/unit/ -v -m "not slow"
+      - run: uv run pytest tests/mcp/ -v

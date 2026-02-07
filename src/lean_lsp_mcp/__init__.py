@@ -1,35 +1,39 @@
 import argparse
 import os
 
-from lean_lsp_mcp.server import mcp
 
-
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Lean LSP MCP Server")
     parser.add_argument(
         "--transport",
         type=str,
-        choices=["stdio", "streamable-http", "sse"],
-        default="stdio",
-        help="Transport method for the server. Default is 'stdio'.",
+        choices=["streamable-http", "sse"],
+        default="streamable-http",
+        help="Transport method for the server. Default is 'streamable-http'.",
     )
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address")
+    parser.add_argument("--port", type=int, default=8000, help="Host port")
     parser.add_argument(
-        "--host",
+        "--workspace-root",
         type=str,
-        default="127.0.0.1",
-        help="Host address for transport",
+        help="Workspace Lean project root (equivalent to LEAN_WORKSPACE_ROOT)",
     )
     parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Host port for transport",
+        "--profile",
+        type=str,
+        choices=["read", "write"],
+        help="Server profile (equivalent to LEAN_SERVER_PROFILE)",
+    )
+    parser.add_argument(
+        "--auth-mode",
+        type=str,
+        choices=["none", "oauth", "bearer", "oauth_and_bearer", "mixed"],
+        help="Auth mode (equivalent to LEAN_AUTH_MODE)",
     )
     parser.add_argument(
         "--loogle-local",
         action="store_true",
-        help="Enable local loogle (auto-installs on first run, ~5-10 min). "
-        "Avoids rate limits and network dependencies.",
+        help="Enable local loogle (auto-installs on first run, ~5-10 min).",
     )
     parser.add_argument(
         "--loogle-cache-dir",
@@ -39,7 +43,7 @@ def main():
     parser.add_argument(
         "--repl",
         action="store_true",
-        help="Enable fast REPL-based multi-attempt (~5x faster). Requires Lean REPL.",
+        help="Enable fast REPL-based multi-attempt. Requires Lean REPL.",
     )
     parser.add_argument(
         "--repl-timeout",
@@ -48,7 +52,12 @@ def main():
     )
     args = parser.parse_args()
 
-    # Set env vars from CLI args (CLI takes precedence over env vars)
+    if args.workspace_root:
+        os.environ["LEAN_WORKSPACE_ROOT"] = args.workspace_root
+    if args.profile:
+        os.environ["LEAN_SERVER_PROFILE"] = args.profile
+    if args.auth_mode:
+        os.environ["LEAN_AUTH_MODE"] = args.auth_mode
     if args.loogle_local:
         os.environ["LEAN_LOOGLE_LOCAL"] = "true"
     if args.loogle_cache_dir:
@@ -58,6 +67,10 @@ def main():
     if args.repl_timeout:
         os.environ["LEAN_REPL_TIMEOUT"] = str(args.repl_timeout)
 
+    # Import after env overrides so server initialization sees final config.
+    from lean_lsp_mcp.server import mcp
+
     mcp.settings.host = args.host
     mcp.settings.port = args.port
     mcp.run(transport=args.transport)
+    return 0

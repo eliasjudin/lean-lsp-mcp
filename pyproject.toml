@@ -31,7 +31,7 @@ exclude = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
-testpaths = ["tests/v2"]
+testpaths = ["tests/mcp"]
 norecursedirs = ["lean-lsp-mcp", ".git", ".venv"]
 pythonpath = ["src"]
 

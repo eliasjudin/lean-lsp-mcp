@@ -1,12 +1,12 @@
-# Migration Guide: v1 -> v2
+# Migration Guide: v1 -> current
 
 ## Scope
 
-v2 is a hard break. Legacy `lean_*` tool names and legacy transports are removed.
+The current release is a hard break. Legacy `lean_*` tool names and legacy transports are removed.
 
 ## Tool Rename Map
 
-| v1 tool | v2 tool |
+| v1 tool | current tool |
 |---|---|
 | `lean_file_outline` | `outline` |
 | `lean_diagnostic_messages` | `diagnostics` |
@@ -26,7 +26,7 @@ v2 is a hard break. Legacy `lean_*` tool names and legacy transports are removed
 | `lean_multi_attempt` | `multi_attempt` |
 | `lean_run_code` | `run_code` |
 
-New in v2:
+New:
 - `search(query)`
 - `fetch(id)`
 
@@ -41,7 +41,7 @@ New in v2:
 
 ## Transport Changes
 
-Supported transports in v2:
+Supported transports:
 - `streamable-http`
 - `sse`
 
@@ -54,6 +54,7 @@ Auth mode is controlled by `LEAN_AUTH_MODE`:
 - `oauth_and_bearer` (default for remote)
 - `oauth`
 - `bearer`
+- `mixed` (initialize/list-tools unauthenticated; tools use per-tool `securitySchemes`)
 - `none` (only for explicit local/test mode)
 
 Related env vars:
@@ -61,6 +62,10 @@ Related env vars:
 - `LEAN_OAUTH_RESOURCE_SERVER_URL`
 - `LEAN_OAUTH_REQUIRED_SCOPES`
 - `LEAN_LSP_MCP_TOKEN`
+
+OAuth metadata route:
+- `GET /.well-known/oauth-protected-resource` exposes resource metadata used by ChatGPT OAuth linking.
+- In mixed mode, unauthorized write tools return `_meta["mcp/www_authenticate"]` challenges.
 
 ## Deployment Profile Changes
 
