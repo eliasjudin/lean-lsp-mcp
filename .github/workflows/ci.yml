@@ -41,5 +41,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install ripgrep
+        run: sudo apt-get install -y ripgrep
       - run: uv sync --extra dev
       - run: uv run pytest tests/mcp/ -v
