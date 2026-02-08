@@ -392,26 +392,30 @@ AUTH_CONFIG, auth_settings, token_verifier = auth_settings_and_verifier()
 
 
 def _security_schemes_for_tool(tool_name: str) -> list[dict[str, Any]] | None:
-    if AUTH_CONFIG.mode != AuthMode.MIXED:
-        return None
-
     oauth_scheme: dict[str, Any] = {"type": "oauth2"}
     if AUTH_CONFIG.required_scopes:
         oauth_scheme["scopes"] = AUTH_CONFIG.required_scopes
 
-    if tool_name in WRITE_TOOL_NAMES:
+    if AUTH_CONFIG.mode == AuthMode.MIXED:
+        if tool_name in WRITE_TOOL_NAMES:
+            return [oauth_scheme]
+        return [{"type": "noauth"}]
+
+    if AUTH_CONFIG.mode in {AuthMode.OAUTH, AuthMode.OAUTH_AND_BEARER}:
         return [oauth_scheme]
-    return [{"type": "noauth"}]
+
+    if AUTH_CONFIG.mode == AuthMode.NONE:
+        return [{"type": "noauth"}]
+
+    # AuthMode.BEARER does not have a standard MCP scheme descriptor.
+    return None
 
 
 class LeanFastMCP(FastMCP):
-    """FastMCP wrapper adding per-tool securitySchemes for mixed auth mode."""
+    """FastMCP wrapper adding per-tool securitySchemes metadata."""
 
     async def list_tools(self) -> list[MCPTool]:
         tools = await super().list_tools()
-        if AUTH_CONFIG.mode != AuthMode.MIXED:
-            return tools
-
         result: list[MCPTool] = []
         for tool in tools:
             payload = tool.model_dump(by_alias=True, exclude_none=True)
@@ -673,17 +677,15 @@ def fetch(
 
 
 def _force_strict_input_schema(*tool_names: str) -> None:
-    """Ensure selected tool schemas reject unknown properties."""
-    for tool_name in tool_names:
+    """Ensure tool schemas reject unknown properties."""
+    names = tool_names or tuple(mcp._tool_manager._tools.keys())
+    for tool_name in names:
         tool = mcp._tool_manager._tools.get(tool_name)
         if tool is None:
             continue
         params = getattr(tool, "parameters", None)
-        if isinstance(params, dict):
+        if isinstance(params, dict) and params.get("type") == "object":
             params["additionalProperties"] = False
-
-
-_force_strict_input_schema("search", "fetch")
 
 
 @mcp.tool(
@@ -1648,6 +1650,9 @@ if write_tools_enabled(SERVER_PROFILE):
         diagnostics = _to_diagnostic_messages(raw_diagnostics)
         has_errors = any(d.severity == "error" for d in diagnostics)
         return RunResult(success=not has_errors, diagnostics=diagnostics)
+
+
+_force_strict_input_schema()
 
 
 if __name__ == "__main__":

@@ -157,6 +157,38 @@ async def test_remote_mixed_list_tools_exposes_security_schemes(
 
 
 @pytest.mark.asyncio
+async def test_remote_none_list_tools_exposes_noauth_security_schemes(
+    remote_client_factory: Callable[..., AsyncContextManager[MCPClient]],
+) -> None:
+    async with remote_client_factory(
+        transport="streamable-http",
+        profile="write",
+        auth_mode="none",
+    ) as client:
+        tools = await client.list_tools_full()
+        payloads = {tool.name: tool.model_dump(by_alias=True) for tool in tools}
+        assert payloads["search"]["securitySchemes"] == [{"type": "noauth"}]
+        assert payloads["build"]["securitySchemes"] == [{"type": "noauth"}]
+
+
+@pytest.mark.asyncio
+async def test_remote_oauth_and_bearer_list_tools_exposes_oauth2_security_schemes(
+    remote_client_factory: Callable[..., AsyncContextManager[MCPClient]],
+) -> None:
+    async with remote_client_factory(
+        transport="streamable-http",
+        profile="write",
+        auth_mode="oauth_and_bearer",
+        token="server-token",
+        client_token="server-token",
+    ) as client:
+        tools = await client.list_tools_full()
+        payloads = {tool.name: tool.model_dump(by_alias=True) for tool in tools}
+        assert payloads["search"]["securitySchemes"][0]["type"] == "oauth2"
+        assert payloads["build"]["securitySchemes"][0]["type"] == "oauth2"
+
+
+@pytest.mark.asyncio
 async def test_remote_mixed_unauthorized_write_returns_auth_challenge(
     remote_client_factory: Callable[..., AsyncContextManager[MCPClient]],
 ) -> None:
