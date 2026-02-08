@@ -2,7 +2,7 @@
 
 ## Scope
 
-The current release is a hard break. Legacy `lean_*` tool names and legacy transports are removed.
+This release (`0.21.0`) is a hard break. Legacy `lean_*` tool names and legacy transports are removed.
 
 ## Tool Rename Map
 

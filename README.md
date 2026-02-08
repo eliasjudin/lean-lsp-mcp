@@ -20,6 +20,7 @@ This server follows OpenAI MCP guidance for connector/deep-research compatibilit
 - `search`/`fetch` return one MCP `content` item of `type: "text"` with JSON payload ([MCP guide](https://platform.openai.com/docs/mcp#search-tool), [fetch](https://platform.openai.com/docs/mcp#fetch-tool)).
 - Tool annotations communicate impact (`readOnlyHint`, `openWorldHint`, `destructiveHint`) ([Apps SDK MCP server guide](https://developers.openai.com/apps-sdk/build/mcp-server/#tool-annotations-and-elicitation)).
 - Deployment docs include trust boundaries and approval controls for remote MCP servers ([Connectors and MCP servers](https://platform.openai.com/docs/guides/tools-connectors-mcp#approvals)).
+- Tool input schemas reject unknown fields (`inputSchema.additionalProperties=false`) across the full tool surface.
 
 ## Install
 
@@ -70,6 +71,7 @@ Mixed/OAuth metadata endpoint:
 
 - `GET /.well-known/oauth-protected-resource` returns resource metadata for OAuth discovery.
 - In `mixed` mode, unauthenticated write calls return `_meta["mcp/www_authenticate"]` challenges.
+- `list_tools` includes per-tool `securitySchemes` metadata (`noauth`/`oauth2`) to drive client auth behavior.
 
 To allow unauthenticated local runs, set:
 

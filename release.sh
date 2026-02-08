@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: $0 <new_version>"
-  echo "Example: $0 0.20.1"
+  echo "Example: $0 0.21.0"
 }
 
 die() {
@@ -91,4 +91,6 @@ Build artifacts verified with uv build.
 
 Publishing is intentionally manual. Review artifacts, then run:
   uv publish
+
+Open the release PR against your fork (origin), not upstream/main.
 EOF

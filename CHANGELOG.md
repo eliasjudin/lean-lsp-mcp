@@ -2,25 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.20.1] - Unreleased
+## [0.21.0] - Unreleased
 
-Release prep focused on CI hardening, test cleanup, and release process polish.
+Breaking release that completes the MCP app migration on `app` and aligns the server with OpenAI MCP guidance.
 
-### CI hardening
+### Breaking changes
 
-- Run integration tests on `pull_request` and `push` to `main` (in addition to scheduled/manual runs).
-- Remove fragile integration workflow steps (`lake update` / `lake exe cache get`) in favor of deterministic `lake build`.
-- Provision Lean toolchain explicitly in CI workflows and cache toolchain/artifacts.
-- Align release preflight checks with CI (`ruff check`, `ruff format --check`, `pytest tests/mcp/ -v`).
-- Verify artifacts with `uv build` before creating or pushing the release tag.
+- Remove legacy `lean_*` tool names.
+- Keep only `streamable-http` and `sse` as supported transports.
+- Enforce workspace-relative `path` handling for file tools.
+- Split exposed tools by server profile (`read` / `write`) with no legacy compatibility aliases.
 
-### Test cleanup
+### OpenAI MCP conformance
 
-- Tighten local test guidance around the `tests/mcp` suite used in CI.
-- Keep developer setup and release checks consistent to reduce test drift.
+- Keep `search`/`fetch` payloads aligned with MCP connector/deep-research contracts.
+- Keep per-tool annotations and mixed-auth security metadata aligned with current guidance.
+- Enforce strict input schemas (`additionalProperties: false`) across the full tool surface.
+- Add MCP test coverage that validates strict schema behavior in both read and write profiles.
 
-### Release process polish
+### CI and release
 
-- Harden `release.sh` with `set -euo pipefail`.
-- Replace GNU-specific `sed -i` usage with a Python-based version update.
-- Remove automatic `uv publish`; publishing is now a separate explicit step.
+- Provision Lean toolchain and ripgrep in CI matrix jobs before running MCP tests.
+- Run only the `tests/mcp` suite in CI after legacy test tree removal.
+- Keep release preflight checks aligned with CI (`ruff`, `pytest tests/mcp`, `uv build`).
+- Keep `release.sh` publishing manual and note fork-targeted PR flow.
