@@ -77,6 +77,12 @@ Recommended deployment:
 1. Run a read endpoint for general model access.
 2. Run a write endpoint with tighter access and approval policy.
 
+## Build Behavior Change
+
+- `build` no longer always runs `lake exe cache get`.
+- To enable the old prefetch behavior explicitly, set `LEAN_BUILD_FETCH_CACHE=true`.
+- Cache prefetch is best-effort and does not fail the tool by itself.
+
 ## Responses API Integration Notes
 
 For least privilege, use MCP tool config with:

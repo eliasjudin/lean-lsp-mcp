@@ -250,6 +250,14 @@ External web-backed tools are enabled by default. Disable with:
 - `LEAN_ENABLE_STATE_SEARCH=false`
 - `LEAN_ENABLE_HAMMER_PREMISE=false`
 
+## Build cache prefetch toggle
+
+`build` no longer forces `lake exe cache get` on every invocation.
+
+- Default: disabled (faster/local deterministic behavior).
+- Optional: set `LEAN_BUILD_FETCH_CACHE=true` to run `lake exe cache get` before `lake build`.
+- Failures in cache prefetch are treated as best-effort warnings and do not fail `build` directly.
+
 ## Development
 
 Run lint + tests:
