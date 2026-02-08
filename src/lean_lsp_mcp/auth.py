@@ -5,15 +5,15 @@ import json
 import os
 import secrets
 import time
-import urllib.request
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-import certifi
 import jwt
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
+
+from lean_lsp_mcp.http_client import HttpRequestError, request_json_sync
 
 
 class AuthMode(str, Enum):
@@ -204,15 +204,13 @@ class OIDCJWTVerifier:
         return f"{self.issuer_url}/.well-known/openid-configuration"
 
     def _fetch_json_sync(self, url: str) -> dict[str, Any]:
-        req = urllib.request.Request(url, headers={"User-Agent": "lean-lsp-mcp/1.0"})
-        ssl_ctx = certifi.where()
-        import ssl as _ssl
-
-        context = _ssl.create_default_context(cafile=ssl_ctx)
-        with urllib.request.urlopen(
-            req, timeout=self.timeout, context=context
-        ) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            payload = request_json_sync("GET", url, timeout=self.timeout)
+        except HttpRequestError as exc:
+            raise ValueError(str(exc)) from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid JSON payload type")
+        return payload
 
 
 class CompositeTokenVerifier(TokenVerifier):

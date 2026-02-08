@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import secrets
@@ -6,6 +7,8 @@ import tempfile
 from typing import Any, List, Dict, Optional, Callable
 
 from mcp.server.auth.provider import AccessToken, TokenVerifier
+
+logger = logging.getLogger(__name__)
 
 
 # Pattern to extract file paths from build stderr: "error: path/file.lean:line:col: message"
@@ -349,8 +352,6 @@ def get_declaration_range(
     Returns:
         Tuple of (start_line, end_line) as 1-indexed integers, or None if not found
     """
-    from lean_lsp_mcp.server import logger
-
     try:
         # Ensure file is opened (LSP needs this to analyze the file)
         client.open_file(file_path)
