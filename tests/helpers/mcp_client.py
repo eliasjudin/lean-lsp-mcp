@@ -220,7 +220,9 @@ def assert_app_home_metadata(
     expected_workspace_root: str | None = None,
 ) -> None:
     missing_top_level = APP_METADATA_REQUIRED_KEYS.difference(metadata.keys())
-    assert not missing_top_level, f"Missing app metadata keys: {sorted(missing_top_level)}"
+    assert not missing_top_level, (
+        f"Missing app metadata keys: {sorted(missing_top_level)}"
+    )
 
     app_name = metadata["app_name"]
     assert isinstance(app_name, str) and app_name.strip(), (
