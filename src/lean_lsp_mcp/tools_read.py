@@ -87,7 +87,7 @@ def register_read_tools(
         ctx: Context,
         query: Annotated[str, Field(description="Search query")],
     ) -> str:
-        """OpenAI-compatible MCP search tool returning JSON payload in text content."""
+        """Use this when you need candidate Lean declarations for a text query."""
         app_ctx = ctx.request_context.lifespan_context
         if not rg_available:
             raise LeanToolError(rg_message)
@@ -118,7 +118,7 @@ def register_read_tools(
         ctx: Context,
         id: Annotated[str, Field(description="Declaration id from `search`")],
     ) -> str:
-        """OpenAI-compatible MCP fetch tool returning JSON payload in text content."""
+        """Use this when you need the full declaration payload for a search result id."""
         app_ctx = ctx.request_context.lifespan_context
         client: LeanLSPClient | None = app_ctx.client
         if client is None:
@@ -150,6 +150,7 @@ def register_read_tools(
         ctx: Context,
         path: Annotated[str, Field(description="Workspace-relative path to Lean file")],
     ) -> FileOutline:
+        """Use this when you need imports and declarations for a Lean source file."""
         _, rel_path = resolve_and_prepare_file(ctx, path)
         client: LeanLSPClient = ctx.request_context.lifespan_context.client
         return generate_outline_data(client, rel_path)
@@ -177,6 +178,7 @@ def register_read_tools(
             str | None, Field(description="Filter to declaration (slow)")
         ] = None,
     ) -> DiagnosticsResult:
+        """Use this when you need Lean diagnostics, optionally narrowed by lines or declaration."""
         _, rel_path = resolve_and_prepare_file(ctx, path)
         client: LeanLSPClient = ctx.request_context.lifespan_context.client
         client.open_file(rel_path)
@@ -237,6 +239,7 @@ def register_read_tools(
             Field(description="Column (1-indexed). Omit for before/after", ge=1),
         ] = None,
     ) -> GoalState:
+        """Use this when you need proof goals at a file position or line boundaries."""
         _, rel_path = resolve_and_prepare_file(ctx, path)
         client: LeanLSPClient = ctx.request_context.lifespan_context.client
         client.open_file(rel_path)
@@ -288,6 +291,7 @@ def register_read_tools(
             int | None, Field(description="Column (defaults to end of line)", ge=1)
         ] = None,
     ) -> TermGoalState:
+        """Use this when you need the expected type for a term at a cursor position."""
         _, rel_path = resolve_and_prepare_file(ctx, path)
         client: LeanLSPClient = ctx.request_context.lifespan_context.client
         client.open_file(rel_path)
@@ -331,6 +335,7 @@ def register_read_tools(
             int, Field(description="Column at START of identifier", ge=1)
         ],
     ) -> HoverInfo:
+        """Use this when you need symbol docs, type info, and local diagnostics at a position."""
         _, rel_path = resolve_and_prepare_file(ctx, path)
         client: LeanLSPClient = ctx.request_context.lifespan_context.client
         client.open_file(rel_path)
@@ -374,6 +379,7 @@ def register_read_tools(
             int, Field(description="Max completions", ge=1)
         ] = 32,
     ) -> CompletionsResult:
+        """Use this when you need Lean IDE completions at a cursor position."""
         _, rel_path = resolve_and_prepare_file(ctx, path)
         client: LeanLSPClient = ctx.request_context.lifespan_context.client
         client.open_file(rel_path)
@@ -440,6 +446,7 @@ def register_read_tools(
             str, Field(description="Symbol (case sensitive, must be in file)")
         ],
     ) -> DeclarationInfo:
+        """Use this when you need the source file and contents for a specific symbol."""
         _, rel_path = resolve_and_prepare_file(ctx, path)
         client: LeanLSPClient = ctx.request_context.lifespan_context.client
         client.open_file(rel_path)
@@ -499,6 +506,7 @@ def register_read_tools(
             float, Field(description="Max seconds to wait", ge=1)
         ] = 60.0,
     ) -> ProofProfileResult:
+        """Use this when you need timing hotspots for a theorem proof."""
         from lean_lsp_mcp.profile_utils import profile_theorem
 
         abs_path, _ = resolve_and_prepare_file(ctx, path)

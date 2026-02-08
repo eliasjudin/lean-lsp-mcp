@@ -99,6 +99,7 @@ Read profile:
 ```bash
 uv run python -m lean_lsp_mcp --transport streamable-http --profile read
 # http://127.0.0.1:8000/mcp
+# health: http://127.0.0.1:8000/
 ```
 
 Write profile:
@@ -126,6 +127,33 @@ uv run python -m lean_lsp_mcp \
   --repl \
   --repl-timeout 90
 ```
+
+## HTTP compatibility defaults
+
+- `GET /` returns a lightweight health response (`Lean LSP MCP server`).
+- CORS preflight is handled for MCP endpoints (including nested paths like `/mcp/actions`).
+- In `LEAN_AUTH_MODE=none`, OAuth discovery routes stay absent (`404`) by default.
+
+### CORS env knobs
+
+- `LEAN_CORS_ALLOW_ORIGINS` (comma-separated; default `*`)
+- `LEAN_CORS_ALLOW_ORIGIN_REGEX` (optional regex)
+- `LEAN_CORS_ALLOW_METHODS` (comma-separated; default `GET,POST,DELETE,OPTIONS`)
+- `LEAN_CORS_ALLOW_HEADERS` (comma-separated; default `content-type,mcp-session-id,authorization`)
+- `LEAN_CORS_EXPOSE_HEADERS` (comma-separated; default `Mcp-Session-Id,mcp-session-id`)
+- `LEAN_CORS_ALLOW_CREDENTIALS` (`true`/`false`, default `false`)
+- `LEAN_CORS_MAX_AGE` (seconds, default `600`)
+
+### Transport security env knobs
+
+- `LEAN_TRANSPORT_DNS_REBIND_PROTECTION` (`auto`/`true`/`false`, default `auto`)
+- `LEAN_TRANSPORT_ALLOWED_HOSTS` (comma-separated host patterns like `example.com:*`)
+- `LEAN_TRANSPORT_ALLOWED_ORIGINS` (comma-separated origin patterns)
+
+`auto` mode keeps DNS rebinding checks enabled when the server can infer safe host
+constraints (for example localhost binds). For wildcard binds like `0.0.0.0`,
+provide `LEAN_TRANSPORT_ALLOWED_HOSTS` to keep strict validation enabled.
+Default transport-origin allowlist includes localhost plus ChatGPT origins.
 
 ## Tool surface
 

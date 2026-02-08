@@ -58,6 +58,8 @@ def main() -> int:
         os.environ["LEAN_SERVER_PROFILE"] = args.profile
     if args.auth_mode:
         os.environ["LEAN_AUTH_MODE"] = args.auth_mode
+    os.environ["LEAN_BIND_HOST"] = args.host
+    os.environ["LEAN_BIND_PORT"] = str(args.port)
     if args.loogle_local:
         os.environ["LEAN_LOOGLE_LOCAL"] = "true"
     if args.loogle_cache_dir:

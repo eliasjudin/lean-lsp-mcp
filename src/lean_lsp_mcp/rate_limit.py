@@ -56,8 +56,11 @@ def rate_limited(category: str, max_requests: int, per_seconds: int):
                     return msg
                 return func(*args, **kwargs)
 
-        doc = wrapper.__doc__ or ""
-        wrapper.__doc__ = f"Limit: {max_requests}req/{per_seconds}s. {doc}"
+        doc = (wrapper.__doc__ or "").strip()
+        if doc:
+            wrapper.__doc__ = f"{doc} Limit: {max_requests}req/{per_seconds}s."
+        else:
+            wrapper.__doc__ = f"Limit: {max_requests}req/{per_seconds}s."
         return wrapper
 
     return decorator

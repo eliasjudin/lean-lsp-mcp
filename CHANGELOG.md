@@ -17,8 +17,17 @@ Breaking release that completes the MCP app migration on `app` and aligns the se
 
 - Keep `search`/`fetch` payloads aligned with MCP connector/deep-research contracts.
 - Keep per-tool annotations and mixed-auth security metadata aligned with current guidance.
+- Add explicit "Use this when..." tool descriptions across the full tool surface.
 - Enforce strict input schemas (`additionalProperties: false`) across the full tool surface.
 - Add MCP test coverage that validates strict schema behavior in both read and write profiles.
+- Add HTTP compatibility coverage for health checks and CORS preflight.
+
+### Transport and runtime
+
+- Add `GET /` health route for connector-wizard compatibility.
+- Add configurable CORS behavior for MCP endpoints.
+- Add configurable transport security defaults with ChatGPT/local origin allowlists.
+- Bump `mcp[cli]` to `1.26.0`.
 
 ### CI and release
 

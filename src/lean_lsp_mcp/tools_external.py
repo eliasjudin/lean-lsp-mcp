@@ -54,6 +54,7 @@ def register_external_tools(
         query: Annotated[str, Field(description="Declaration name or prefix")],
         limit: Annotated[int, Field(description="Max matches", ge=1)] = 10,
     ) -> LocalSearchResults:
+        """Use this when you need a fast local declaration-name lookup in the workspace."""
         if not rg_available:
             raise LeanToolError(rg_message)
 
@@ -90,6 +91,7 @@ def register_external_tools(
         query: Annotated[str, Field(description="Natural language or Lean term query")],
         num_results: Annotated[int, Field(description="Max results", ge=1)] = 5,
     ) -> LeanSearchResults:
+        """Use this when you need remote natural-language search on leansearch.net."""
         if not external_tools_enabled("leansearch"):
             raise LeanToolError("leansearch is disabled by server configuration.")
 
@@ -140,6 +142,7 @@ def register_external_tools(
         ],
         num_results: Annotated[int, Field(description="Max results", ge=1)] = 8,
     ) -> LoogleResults:
+        """Use this when you need type-signature search through loogle."""
         if not external_tools_enabled("loogle"):
             raise LeanToolError("loogle is disabled by server configuration.")
 
@@ -185,6 +188,7 @@ def register_external_tools(
         query: Annotated[str, Field(description="Mathematical concept or proof state")],
         num_results: Annotated[int, Field(description="Max results", ge=1)] = 5,
     ) -> LeanFinderResults:
+        """Use this when you need semantic mathlib retrieval from Lean Finder."""
         if not external_tools_enabled("leanfinder"):
             raise LeanToolError("leanfinder is disabled by server configuration.")
 
@@ -244,6 +248,7 @@ def register_external_tools(
         column: Annotated[int, Field(description="Column number (1-indexed)", ge=1)],
         num_results: Annotated[int, Field(description="Max results", ge=1)] = 5,
     ) -> StateSearchResults:
+        """Use this when you need premise-search suggestions for the current proof goal."""
         if not external_tools_enabled("state_search"):
             raise LeanToolError("state_search is disabled by server configuration.")
 
@@ -298,6 +303,7 @@ def register_external_tools(
         column: Annotated[int, Field(description="Column number (1-indexed)", ge=1)],
         num_results: Annotated[int, Field(description="Max results", ge=1)] = 32,
     ) -> PremiseResults:
+        """Use this when you need hammer premise candidates for an active goal."""
         if not external_tools_enabled("hammer_premise"):
             raise LeanToolError("hammer_premise is disabled by server configuration.")
 

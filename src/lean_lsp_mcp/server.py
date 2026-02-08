@@ -15,12 +15,21 @@ from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
 from mcp.server.fastmcp.utilities.logging import configure_logging, get_logger
 from mcp.types import Tool as MCPTool
 from pydantic import ConfigDict
+from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, Response
 
 from lean_lsp_mcp.auth import auth_settings_and_verifier
 from lean_lsp_mcp.auth_routes import (
     mixed_auth_error_for_write_tool,
     register_oauth_metadata_route,
     security_schemes_for_tool,
+)
+from lean_lsp_mcp.http_config import (
+    bind_host_from_env,
+    bind_port_from_env,
+    build_transport_security,
+    load_cors_config,
 )
 from lean_lsp_mcp.loogle import LoogleManager
 from lean_lsp_mcp.profiles import ServerProfile, get_server_profile
@@ -71,6 +80,11 @@ else:
     configure_logging("CRITICAL" if _LOG_LEVEL == "NONE" else _LOG_LEVEL)
 
 logger = get_logger(__name__)
+
+BIND_HOST = bind_host_from_env()
+BIND_PORT = bind_port_from_env()
+CORS_CONFIG = load_cors_config()
+TRANSPORT_SECURITY = build_transport_security(BIND_HOST, logger=logger)
 
 _RG_AVAILABLE, _RG_MESSAGE = check_ripgrep_status()
 SERVER_PROFILE = get_server_profile()
@@ -203,12 +217,38 @@ class LeanFastMCP(FastMCP):
             result.append(MCPTool.model_validate(payload))
         return result
 
+    def _with_http_middleware(self, app):
+        if getattr(app.state, "lean_http_middleware_applied", False):
+            return app
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(CORS_CONFIG.allow_origins),
+            allow_origin_regex=CORS_CONFIG.allow_origin_regex,
+            allow_methods=list(CORS_CONFIG.allow_methods),
+            allow_headers=list(CORS_CONFIG.allow_headers),
+            expose_headers=list(CORS_CONFIG.expose_headers),
+            allow_credentials=CORS_CONFIG.allow_credentials,
+            max_age=CORS_CONFIG.max_age,
+        )
+        app.state.lean_http_middleware_applied = True
+        return app
+
+    def streamable_http_app(self):
+        return self._with_http_middleware(super().streamable_http_app())
+
+    def sse_app(self, mount_path: str | None = None):
+        return self._with_http_middleware(super().sse_app(mount_path))
+
 
 mcp_kwargs = dict(
     name="Lean LSP",
     instructions=INSTRUCTIONS,
     dependencies=["leanclient"],
     lifespan=app_lifespan,
+    host=BIND_HOST,
+    port=BIND_PORT,
+    transport_security=TRANSPORT_SECURITY,
 )
 if auth_settings and token_verifier:
     mcp_kwargs["auth"] = auth_settings
@@ -217,6 +257,11 @@ if auth_settings and token_verifier:
 mcp = LeanFastMCP(**mcp_kwargs)
 
 register_oauth_metadata_route(mcp, auth_config=AUTH_CONFIG)
+
+
+@mcp.custom_route("/", methods=["GET"], include_in_schema=False)
+async def health(_request: Request) -> Response:
+    return PlainTextResponse("Lean LSP MCP server")
 
 
 async def _mixed_auth_checker(

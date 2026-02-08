@@ -192,6 +192,7 @@ def register_write_tools(
             int, Field(description="Return last N lines of build log (0=none)")
         ] = 20,
     ) -> BuildResult:
+        """Use this when you need to run `lake build` and inspect recent build output."""
         auth_error = await mixed_auth_checker(ctx, "build")
         if auth_error is not None:
             return auth_error
@@ -300,6 +301,7 @@ def register_write_tools(
             list[str], Field(description="Tactics to try (3+ recommended)")
         ],
     ) -> MultiAttemptResult:
+        """Use this when you want to compare multiple tactic snippets at one line."""
         auth_error = await mixed_auth_checker(ctx, "multi_attempt")
         if auth_error is not None:
             return auth_error
@@ -330,6 +332,7 @@ def register_write_tools(
             str, Field(description="Self-contained Lean code with imports")
         ],
     ) -> RunResult:
+        """Use this when you need diagnostics for a temporary standalone Lean snippet."""
         auth_error = await mixed_auth_checker(ctx, "run_code")
         if auth_error is not None:
             return auth_error
