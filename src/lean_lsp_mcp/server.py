@@ -19,6 +19,10 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
+from lean_lsp_mcp.app_surface import (
+    app_surface_config_from_server,
+    register_app_home_resource,
+)
 from lean_lsp_mcp.auth import auth_settings_and_verifier
 from lean_lsp_mcp.auth_routes import (
     mixed_auth_error_for_write_tool,
@@ -36,6 +40,7 @@ from lean_lsp_mcp.profiles import ServerProfile, get_server_profile
 from lean_lsp_mcp.repl import Repl, repl_enabled
 from lean_lsp_mcp.search_utils import check_ripgrep_status
 from lean_lsp_mcp.tool_registration import (
+    READ_TOOL_NAMES,
     WRITE_TOOL_NAMES,
     enabled_tool_names,
     register_tools,
@@ -255,6 +260,16 @@ if auth_settings and token_verifier:
     mcp_kwargs["token_verifier"] = token_verifier
 
 mcp = LeanFastMCP(**mcp_kwargs)
+APP_SURFACE_CONFIG = app_surface_config_from_server(mcp)
+
+register_app_home_resource(
+    mcp,
+    app_config=APP_SURFACE_CONFIG,
+    profile=SERVER_PROFILE,
+    auth_config=AUTH_CONFIG,
+    read_tool_names=READ_TOOL_NAMES,
+    write_tool_names=WRITE_TOOL_NAMES,
+)
 
 register_oauth_metadata_route(mcp, auth_config=AUTH_CONFIG)
 
@@ -279,6 +294,8 @@ async def _mixed_auth_checker(
 
 register_tools(
     mcp,
+    app_config=APP_SURFACE_CONFIG,
+    auth_config=AUTH_CONFIG,
     profile=SERVER_PROFILE,
     rg_available=_RG_AVAILABLE,
     rg_message=_RG_MESSAGE,

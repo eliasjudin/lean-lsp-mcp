@@ -35,7 +35,10 @@ New:
 - File-based inputs now use `path` (workspace-relative), not absolute `file_path`.
 - Absolute paths and escape attempts (`..`, symlink escapes) are rejected.
 - `search` now emits only workspace-fetchable declarations; each returned `id` is valid for `fetch` in the same workspace.
-- `search` and `fetch` return MCP `content` with exactly one `text` item containing JSON:
+- `search` and `fetch` return explicit MCP tool results with:
+  - exactly one `content` block of `type: "text"` containing JSON
+  - `structuredContent` containing the same JSON object
+- Shared JSON payloads:
   - `search`: `{"results":[{"id","title","url"}]}`
   - `fetch`: `{"id","title","text","url","metadata?"}`
 
@@ -72,6 +75,11 @@ OAuth metadata route:
 `LEAN_SERVER_PROFILE` controls exposed tools:
 - `read`: read-only tool set
 - `write`: read + write tools (`build`, `multi_attempt`, `run_code`)
+
+MCP app/runtime envs:
+- `LEAN_WORKSPACE_ROOT` is required and must point at a Lean project root.
+- `LEAN_BIND_HOST` and `LEAN_BIND_PORT` control HTTP bind address (CLI: `--host`, `--port`).
+- `LEAN_PUBLIC_BASE_URL` sets canonical citation URLs for `search`/`fetch`; fallback is `LEAN_OAUTH_RESOURCE_SERVER_URL`.
 
 Recommended deployment:
 1. Run a read endpoint for general model access.

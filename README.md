@@ -17,7 +17,7 @@ Release notes: [CHANGELOG.md](CHANGELOG.md)
 
 This server follows OpenAI MCP guidance for connector/deep-research compatibility:
 
-- `search`/`fetch` return one MCP `content` item of `type: "text"` with JSON payload ([MCP guide](https://platform.openai.com/docs/mcp#search-tool), [fetch](https://platform.openai.com/docs/mcp#fetch-tool)).
+- `search`/`fetch` return explicit MCP tool results: one `content` item of `type: "text"` containing JSON plus matching `structuredContent` ([MCP guide](https://platform.openai.com/docs/mcp#search-tool), [fetch](https://platform.openai.com/docs/mcp#fetch-tool)).
 - Tool annotations communicate impact (`readOnlyHint`, `openWorldHint`, `destructiveHint`) ([Apps SDK MCP server guide](https://developers.openai.com/apps-sdk/build/mcp-server/#tool-annotations-and-elicitation)).
 - Deployment docs include trust boundaries and approval controls for remote MCP servers ([Connectors and MCP servers](https://platform.openai.com/docs/guides/tools-connectors-mcp#approvals)).
 - Tool input schemas reject unknown fields (`inputSchema.additionalProperties=false`) across the full tool surface.
@@ -49,6 +49,14 @@ export LEAN_WORKSPACE_ROOT=/absolute/path/to/lean/project
 ```
 
 `LEAN_WORKSPACE_ROOT` must contain `lean-toolchain`.
+
+## Core MCP app envs
+
+- `LEAN_WORKSPACE_ROOT` (required): single-tenant workspace root.
+- `LEAN_SERVER_PROFILE` (`read`/`write`, default `read`): controls write tool exposure.
+- `LEAN_BIND_HOST` (default `127.0.0.1`) and `LEAN_BIND_PORT` (default `8000`): HTTP bind address.
+- `LEAN_PUBLIC_BASE_URL` (optional): canonical HTTPS base for `search`/`fetch` citation URLs; falls back to `LEAN_OAUTH_RESOURCE_SERVER_URL` when unset.
+- `LEAN_LOG_LEVEL` (default `INFO`) and `LEAN_LOG_FILE_CONFIG` (optional): runtime logging controls.
 
 ## Authentication
 
@@ -86,6 +94,10 @@ The following CLI flags are currently supported and map to environment configura
 
 | CLI flag | Behavior | Env mapping and related toggles |
 | --- | --- | --- |
+| `--workspace-root <path>` | Sets the workspace root used by all file tools. | Sets `LEAN_WORKSPACE_ROOT`. |
+| `--profile {read,write}` | Selects tool exposure profile. | Sets `LEAN_SERVER_PROFILE`. |
+| `--host <host>` | Overrides HTTP bind host. | Sets `LEAN_BIND_HOST` (default `127.0.0.1`). |
+| `--port <port>` | Overrides HTTP bind port. | Sets `LEAN_BIND_PORT` (default `8000`). |
 | `--auth-mode {none,oauth,bearer,oauth_and_bearer,mixed}` | Overrides authentication mode. | Sets `LEAN_AUTH_MODE`. Related: `LEAN_ALLOW_NO_AUTH`, `LEAN_OAUTH_ISSUER_URL`, `LEAN_OAUTH_RESOURCE_SERVER_URL`, `LEAN_OAUTH_REQUIRED_SCOPES`, `LEAN_LSP_MCP_TOKEN`. |
 | `--loogle-local` | Enables local loogle backend (instead of remote API). | Sets `LEAN_LOOGLE_LOCAL=true`. Related: `LEAN_ENABLE_LOOGLE` to disable loogle tool entirely. |
 | `--loogle-cache-dir <path>` | Overrides local loogle cache directory. | Sets `LEAN_LOOGLE_CACHE_DIR`. Default is `$XDG_CACHE_HOME/lean-lsp-mcp/loogle` or `~/.cache/lean-lsp-mcp/loogle`. |
@@ -184,7 +196,12 @@ Write profile additional tools:
 
 ## `search`/`fetch` MCP contract
 
-`search` payload (`text` JSON):
+Both tools return:
+
+- exactly one `content` block of `type: "text"` containing JSON
+- `structuredContent` carrying the same JSON object
+
+`search` payload (used for both `content[0].text` JSON and `structuredContent`):
 
 ```json
 {
@@ -198,7 +215,7 @@ Write profile additional tools:
 }
 ```
 
-`fetch` payload (`text` JSON):
+`fetch` payload (used for both `content[0].text` JSON and `structuredContent`):
 
 ```json
 {

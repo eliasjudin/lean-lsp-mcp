@@ -231,3 +231,28 @@ class ProofProfileResult(BaseModel):
     categories: dict[str, float] = Field(
         default_factory=dict, description="Cumulative time by category in ms"
     )
+
+
+class AppTransportPaths(BaseModel):
+    streamable_http: str = Field(description="Streamable HTTP mount path")
+    sse: str = Field(description="SSE mount path")
+
+
+class AppToolGroups(BaseModel):
+    read: List[str] = Field(default_factory=list, description="Read tool names")
+    write: List[str] = Field(default_factory=list, description="Write tool names")
+    enabled: List[str] = Field(
+        default_factory=list, description="Tools enabled for active profile"
+    )
+
+
+class AppHomeResult(BaseModel):
+    app_name: str = Field(description="App display name")
+    profile: str = Field(description="Active server profile")
+    auth_mode: str = Field(description="Active authentication mode")
+    workspace_root: str = Field(description="Workspace root path")
+    template_uri: str = Field(description="MCP app template URI")
+    transport_paths: AppTransportPaths = Field(
+        description="Available MCP transport mount paths"
+    )
+    tool_groups: AppToolGroups = Field(description="Tool groups by capability")

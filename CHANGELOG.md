@@ -15,7 +15,7 @@ Breaking release that completes the MCP app migration on `app` and aligns the se
 
 ### OpenAI MCP conformance
 
-- Keep `search`/`fetch` payloads aligned with MCP connector/deep-research contracts.
+- Return `search`/`fetch` via explicit MCP text-content wrappers with mirrored `structuredContent`.
 - Keep per-tool annotations and mixed-auth security metadata aligned with current guidance.
 - Add explicit "Use this when..." tool descriptions across the full tool surface.
 - Enforce strict input schemas (`additionalProperties: false`) across the full tool surface.
@@ -27,6 +27,7 @@ Breaking release that completes the MCP app migration on `app` and aligns the se
 - Add `GET /` health route for connector-wizard compatibility.
 - Add configurable CORS behavior for MCP endpoints.
 - Add configurable transport security defaults with ChatGPT/local origin allowlists.
+- Refresh runtime docs for MCP app env mappings (`LEAN_WORKSPACE_ROOT`, `LEAN_SERVER_PROFILE`, `LEAN_BIND_HOST`, `LEAN_BIND_PORT`, `LEAN_PUBLIC_BASE_URL`).
 - Bump `mcp[cli]` to `1.26.0`.
 
 ### CI and release

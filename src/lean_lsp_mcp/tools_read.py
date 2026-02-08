@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import unquote, urlparse
 
 from leanclient import LeanLSPClient
 from mcp.server.fastmcp import Context, FastMCP
-from mcp.types import ToolAnnotations
-from pydantic import Field
-from typing import Annotated
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import BaseModel, Field
 
 from lean_lsp_mcp.file_utils import get_file_contents
 from lean_lsp_mcp.models import (
@@ -67,6 +67,14 @@ def declaration_uri_to_path(uri: str) -> Path:
     raise LeanToolError(f"Unsupported declaration URI scheme: {parsed.scheme}")
 
 
+def _text_json_result(payload: BaseModel) -> CallToolResult:
+    payload_json = payload.model_dump_json()
+    return CallToolResult(
+        content=[TextContent(type="text", text=payload_json)],
+        structuredContent=payload.model_dump(mode="json"),
+    )
+
+
 def register_read_tools(
     mcp: FastMCP,
     *,
@@ -86,7 +94,7 @@ def register_read_tools(
     def search(
         ctx: Context,
         query: Annotated[str, Field(description="Search query")],
-    ) -> str:
+    ) -> CallToolResult:
         """Use this when you need candidate Lean declarations for a text query."""
         app_ctx = ctx.request_context.lifespan_context
         if not rg_available:
@@ -102,7 +110,7 @@ def register_read_tools(
             ]
         )
         payload = search_payload_from_local_results(local, app_ctx.workspace_root)
-        return payload.model_dump_json()
+        return _text_json_result(payload)
 
     @mcp.tool(
         "fetch",
@@ -117,7 +125,7 @@ def register_read_tools(
     def fetch(
         ctx: Context,
         id: Annotated[str, Field(description="Declaration id from `search`")],
-    ) -> str:
+    ) -> CallToolResult:
         """Use this when you need the full declaration payload for a search result id."""
         app_ctx = ctx.request_context.lifespan_context
         client: LeanLSPClient | None = app_ctx.client
@@ -134,7 +142,7 @@ def register_read_tools(
             client=client,
             identifier=id,
         )
-        return payload.model_dump_json()
+        return _text_json_result(payload)
 
     @mcp.tool(
         "outline",
