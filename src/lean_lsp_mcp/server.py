@@ -49,7 +49,7 @@ from lean_lsp_mcp.tool_registration import (
 INSTRUCTIONS = """## Lean LSP MCP
 - Remote-first server. Use project-relative `path` only.
 - Single workspace root per process.
-- Use `search`/`fetch` for OpenAI MCP-compatible document retrieval.
+- Use `search`/`fetch` for OpenAI MCP-compatible document retrieval (workspace-first by default).
 - Read tools are always available; write tools depend on server profile.
 """
 

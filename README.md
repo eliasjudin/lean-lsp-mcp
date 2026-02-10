@@ -230,6 +230,8 @@ Both tools return:
 }
 ```
 
+`search` is workspace-scoped for low latency and `fetch` compatibility.
+
 Set `LEAN_PUBLIC_BASE_URL` to a canonical HTTPS base used for citations.
 If unset, the server falls back to `LEAN_OAUTH_RESOURCE_SERVER_URL`; for local-only workflows it can emit `lean://decl/...`.
 

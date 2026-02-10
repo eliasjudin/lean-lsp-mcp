@@ -11,7 +11,9 @@ from mcp.types import TextContent
 from lean_lsp_mcp.models import LocalSearchResult, LocalSearchResults
 from lean_lsp_mcp.search_fetch import (
     build_canonical_url,
+    declaration_text_for_id,
     decode_declaration_id,
+    encode_declaration_id,
     search_payload_from_local_results,
 )
 from lean_lsp_mcp.utils import LeanToolError
@@ -47,6 +49,51 @@ def test_search_payload_filters_unfetchable_paths(tmp_path: Path) -> None:
     assert payload.results[0].title == "inside"
     decoded = decode_declaration_id(payload.results[0].id)
     assert Path(decoded["path"]) == Path("Inside.lean")
+    assert decoded["line"] is None
+
+
+def test_search_payload_preserves_line_anchor(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    inside = workspace / "Inside.lean"
+    inside.write_text("def inside : Nat := 0\n", encoding="utf-8")
+
+    payload = search_payload_from_local_results(
+        LocalSearchResults(
+            items=[
+                LocalSearchResult(name="inside", kind="def", file="Inside.lean", line=1)
+            ]
+        ),
+        workspace,
+    )
+
+    assert len(payload.results) == 1
+    decoded = decode_declaration_id(payload.results[0].id)
+    assert decoded["line"] == 1
+
+
+def test_fetch_line_anchored_id_does_not_require_lsp_client(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    inside = workspace / "Inside.lean"
+    inside.write_text(
+        "def inside : Nat := 0\n\n"
+        "theorem t : True := by\n"
+        "  trivial\n\n"
+        "def after : Nat := 1\n",
+        encoding="utf-8",
+    )
+
+    identifier = encode_declaration_id(path="Inside.lean", symbol="t", line=3)
+    payload = declaration_text_for_id(
+        workspace_root=workspace,
+        client=None,
+        identifier=identifier,
+    )
+
+    assert payload.id == identifier
+    assert payload.title == "t"
+    assert payload.text == "theorem t : True := by\n  trivial"
 
 
 def test_build_canonical_url_rejects_non_http_scheme(
