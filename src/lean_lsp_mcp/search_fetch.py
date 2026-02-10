@@ -20,6 +20,10 @@ _DECLARATION_START_PATTERN = re.compile(
 )
 
 
+def _leading_indent_width(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
 def encode_declaration_id(path: str, symbol: str, line: int | None = None) -> str:
     payload = {"path": path, "symbol": symbol}
     if line is not None:
@@ -142,9 +146,14 @@ def _extract_declaration_text_from_line(*, content: str, line: int) -> str:
     if resolved_start is None:
         raise LeanToolError("Could not resolve declaration start line from fetch id.")
 
+    base_indent = _leading_indent_width(lines[resolved_start])
     end_idx = len(lines)
     for idx in range(resolved_start + 1, len(lines)):
-        if _DECLARATION_START_PATTERN.match(lines[idx]):
+        if not _DECLARATION_START_PATTERN.match(lines[idx]):
+            continue
+        # Stop only at same-or-less indentation than the declaration start.
+        # More-indented declaration starters can appear in local `where` blocks.
+        if _leading_indent_width(lines[idx]) <= base_indent:
             end_idx = idx
             break
 

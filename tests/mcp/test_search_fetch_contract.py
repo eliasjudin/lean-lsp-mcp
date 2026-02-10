@@ -96,6 +96,36 @@ def test_fetch_line_anchored_id_does_not_require_lsp_client(tmp_path: Path) -> N
     assert payload.text == "theorem t : True := by\n  trivial"
 
 
+def test_fetch_line_anchored_id_keeps_nested_where_declarations(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    inside = workspace / "Inside.lean"
+    inside.write_text(
+        "theorem outer : True := by\n"
+        "  trivial\n"
+        "where\n"
+        "  def helper : Nat := 1\n"
+        "  theorem helper_ok : True := by\n"
+        "    trivial\n\n"
+        "def after : Nat := 2\n",
+        encoding="utf-8",
+    )
+
+    identifier = encode_declaration_id(path="Inside.lean", symbol="outer", line=1)
+    payload = declaration_text_for_id(
+        workspace_root=workspace,
+        client=None,
+        identifier=identifier,
+    )
+
+    assert payload.text.startswith("theorem outer : True := by")
+    assert "def helper : Nat := 1" in payload.text
+    assert "theorem helper_ok : True := by" in payload.text
+    assert "def after : Nat := 2" not in payload.text
+
+
 def test_build_canonical_url_rejects_non_http_scheme(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
