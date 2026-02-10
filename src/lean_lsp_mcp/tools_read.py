@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Annotated
 from urllib.parse import unquote, urlparse
 
@@ -48,6 +49,18 @@ from lean_lsp_mcp.utils import (
 from lean_lsp_mcp.pathing import PathResolutionError, to_workspace_relative
 
 
+_WINDOWS_DRIVE_URI_PATH = re.compile(r"^/[A-Za-z]:(?:/|$)")
+
+
+def _normalize_file_uri_path(parsed_uri) -> str:
+    decoded_path = unquote(parsed_uri.path)
+    if parsed_uri.netloc and parsed_uri.netloc != "localhost":
+        return f"//{parsed_uri.netloc}{decoded_path}"
+    if _WINDOWS_DRIVE_URI_PATH.match(decoded_path):
+        return decoded_path[1:]
+    return decoded_path
+
+
 def declaration_uri_to_path(uri: str) -> Path:
     """Resolve an LSP declaration URI/path into a local filesystem path."""
     if not uri:
@@ -55,10 +68,7 @@ def declaration_uri_to_path(uri: str) -> Path:
 
     parsed = urlparse(uri)
     if parsed.scheme == "file":
-        if parsed.netloc and parsed.netloc != "localhost":
-            path = f"//{parsed.netloc}{unquote(parsed.path)}"
-        else:
-            path = unquote(parsed.path)
+        path = _normalize_file_uri_path(parsed)
         return Path(path).resolve()
 
     if parsed.scheme == "":
