@@ -7,11 +7,25 @@ from collections.abc import Callable
 from typing import AsyncContextManager
 
 import pytest
+import jwt
 
 from mcp.server.auth.provider import AccessToken
 
-from lean_lsp_mcp.auth import AuthConfig, AuthMode, CompositeTokenVerifier
+from lean_lsp_mcp.auth import (
+    AuthConfig,
+    AuthMode,
+    CompositeTokenVerifier,
+    OIDCJWTVerifier,
+)
 from tests.helpers.mcp_client import MCPClient
+
+
+def _oidc_verifier() -> OIDCJWTVerifier:
+    return OIDCJWTVerifier(
+        issuer_url="https://issuer.example.invalid",
+        resource_server_url="https://resource.example.invalid",
+        required_scopes=[],
+    )
 
 
 @pytest.mark.asyncio
@@ -88,6 +102,58 @@ async def test_mixed_bearer_fallback_works() -> None:
     assert oauth_access is not None
     assert bearer_access is not None
     assert missing is None
+
+
+def test_oidc_select_jwk_uses_algorithm_compatible_kty_without_kid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verifier = _oidc_verifier()
+    monkeypatch.setattr(
+        verifier,
+        "_get_jwks_sync",
+        lambda: {
+            "keys": [
+                {"kid": "rsa-kid", "kty": "RSA"},
+                {"kid": "ec-kid", "kty": "EC"},
+            ]
+        },
+    )
+    selected = verifier._select_jwk(None, "ES256")
+    assert selected["kid"] == "ec-kid"
+
+
+def test_oidc_select_jwk_rejects_incompatible_kid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verifier = _oidc_verifier()
+    monkeypatch.setattr(
+        verifier,
+        "_get_jwks_sync",
+        lambda: {"keys": [{"kid": "rsa-kid", "kty": "RSA"}]},
+    )
+    with pytest.raises(ValueError, match="incompatible"):
+        verifier._select_jwk("rsa-kid", "ES256")
+
+
+def test_oidc_key_from_jwk_uses_algorithm_specific_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verifier = _oidc_verifier()
+    captured: dict[str, object] = {}
+
+    class _FakeAlgorithm:
+        def from_jwk(self, jwk_json: str) -> object:
+            captured["jwk"] = json.loads(jwk_json)
+            return {"parsed": True}
+
+    monkeypatch.setattr(
+        jwt.algorithms,
+        "get_default_algorithms",
+        lambda: {"ES256": _FakeAlgorithm()},
+    )
+    key = verifier._key_from_jwk({"kid": "ec-kid", "kty": "EC"}, "ES256")
+    assert key == {"parsed": True}
+    assert captured["jwk"] == {"kid": "ec-kid", "kty": "EC"}
 
 
 @pytest.mark.asyncio

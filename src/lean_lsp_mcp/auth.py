@@ -130,9 +130,13 @@ class OIDCJWTVerifier:
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
         algorithm = header.get("alg", "RS256")
+        if not isinstance(algorithm, str) or not algorithm:
+            raise ValueError("Invalid JWT algorithm header")
+        if algorithm.lower() == "none":
+            raise ValueError("Unsigned JWTs are not supported")
 
-        jwk = self._select_jwk(kid)
-        key_obj = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+        jwk = self._select_jwk(kid, algorithm)
+        key_obj = self._key_from_jwk(jwk, algorithm)
 
         options = {"verify_aud": bool(self.resource_server_url)}
         payload = jwt.decode(
@@ -161,7 +165,39 @@ class OIDCJWTVerifier:
 
         return sorted(set(scopes))
 
-    def _select_jwk(self, kid: str | None) -> dict[str, Any]:
+    def _expected_kty_for_alg(self, algorithm: str) -> str | None:
+        if algorithm.startswith(("RS", "PS")):
+            return "RSA"
+        if algorithm.startswith("ES"):
+            return "EC"
+        if algorithm == "EdDSA":
+            return "OKP"
+        if algorithm.startswith("HS"):
+            return "oct"
+        return None
+
+    def _jwk_matches_alg(self, jwk: dict[str, Any], algorithm: str) -> bool:
+        expected_kty = self._expected_kty_for_alg(algorithm)
+        if expected_kty is None:
+            return False
+        return jwk.get("kty") == expected_kty
+
+    def _key_from_jwk(self, jwk: dict[str, Any], algorithm: str) -> Any:
+        algorithms = jwt.algorithms.get_default_algorithms()
+        parser = algorithms.get(algorithm)
+        if parser is None:
+            raise ValueError(f"Unsupported JWT algorithm: {algorithm}")
+        from_jwk = getattr(parser, "from_jwk", None)
+        if from_jwk is None:
+            raise ValueError(f"JWT algorithm {algorithm} does not support JWK keys")
+        try:
+            return from_jwk(json.dumps(jwk))
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(
+                f"Failed to parse JWK for JWT algorithm {algorithm}"
+            ) from exc
+
+    def _select_jwk(self, kid: str | None, algorithm: str) -> dict[str, Any]:
         jwks = self._get_jwks_sync()
         keys = jwks.get("keys", []) if isinstance(jwks, dict) else []
         if not isinstance(keys, list):
@@ -170,13 +206,18 @@ class OIDCJWTVerifier:
         if kid:
             for key in keys:
                 if isinstance(key, dict) and key.get("kid") == kid:
-                    return key
+                    if self._jwk_matches_alg(key, algorithm):
+                        return key
+                    raise ValueError(
+                        "JWK key type is incompatible with JWT algorithm"
+                    )
+            raise ValueError("No matching JWK key found for token kid")
 
         for key in keys:
-            if isinstance(key, dict) and key.get("kty") == "RSA":
+            if isinstance(key, dict) and self._jwk_matches_alg(key, algorithm):
                 return key
 
-        raise ValueError("No usable JWK key found")
+        raise ValueError("No usable JWK key found for JWT algorithm")
 
     def _get_jwks_sync(self) -> dict[str, Any]:
         now = time.time()
