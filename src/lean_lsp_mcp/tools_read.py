@@ -101,11 +101,22 @@ def register_read_tools(
             raise LeanToolError(rg_message)
 
         raw = lean_local_search(
-            query=query.strip(), limit=20, project_root=app_ctx.workspace_root
+            query=query.strip(),
+            limit=20,
+            project_root=app_ctx.workspace_root,
         )
         local = LocalSearchResults(
             items=[
-                LocalSearchResult(name=r["name"], kind=r["kind"], file=r["file"])
+                LocalSearchResult(
+                    name=str(r["name"]),
+                    kind=str(r["kind"]),
+                    file=str(r["file"]),
+                    line=(
+                        r["line"]
+                        if isinstance(r.get("line"), int) and r["line"] >= 1
+                        else None
+                    ),
+                )
                 for r in raw
             ]
         )
@@ -129,19 +140,28 @@ def register_read_tools(
         """Use this when you need the full declaration payload for a search result id."""
         app_ctx = ctx.request_context.lifespan_context
         client: LeanLSPClient | None = app_ctx.client
-        if client is None:
+        try:
+            payload = declaration_text_for_id(
+                workspace_root=app_ctx.workspace_root,
+                client=client,
+                identifier=id,
+            )
+        except LeanToolError as exc:
+            if "requires Lean client initialization" not in str(exc):
+                raise
             from lean_lsp_mcp.client_utils import startup_client
 
             startup_client(ctx)
             client = app_ctx.client
-        if client is None:
-            raise LeanToolError("Failed to initialize Lean client for fetch.")
-
-        payload = declaration_text_for_id(
-            workspace_root=app_ctx.workspace_root,
-            client=client,
-            identifier=id,
-        )
+            if client is None:
+                raise LeanToolError(
+                    "Failed to initialize Lean client for fetch."
+                ) from exc
+            payload = declaration_text_for_id(
+                workspace_root=app_ctx.workspace_root,
+                client=client,
+                identifier=id,
+            )
         return _text_json_result(payload)
 
     @mcp.tool(

@@ -9,6 +9,7 @@ class LocalSearchResult(BaseModel):
     name: str = Field(description="Declaration name")
     kind: str = Field(description="Declaration kind (theorem, def, class, etc.)")
     file: str = Field(description="Relative file path")
+    line: Optional[int] = Field(None, description="Declaration line number (1-indexed)")
 
 
 class LeanSearchResult(BaseModel):

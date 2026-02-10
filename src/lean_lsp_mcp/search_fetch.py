@@ -4,6 +4,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 from urllib.parse import quote, urlparse
 
 from leanclient import LeanLSPClient
@@ -14,13 +15,22 @@ from lean_lsp_mcp.utils import LeanToolError, get_declaration_range
 from lean_lsp_mcp.contracts import FetchPayload, SearchPayload, SearchResultDoc
 
 
-def encode_declaration_id(path: str, symbol: str) -> str:
+_DECLARATION_START_PATTERN = re.compile(
+    r"^\s*(?:theorem|lemma|def|axiom|class|instance|structure|inductive|abbrev|opaque)\b"
+)
+
+
+def encode_declaration_id(path: str, symbol: str, line: int | None = None) -> str:
     payload = {"path": path, "symbol": symbol}
+    if line is not None:
+        if line < 1:
+            raise LeanToolError("Declaration line must be >= 1.")
+        payload["line"] = line
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def decode_declaration_id(identifier: str) -> dict[str, str]:
+def decode_declaration_id(identifier: str) -> dict[str, str | int | None]:
     padding = "=" * ((4 - len(identifier) % 4) % 4)
     try:
         raw = base64.urlsafe_b64decode((identifier + padding).encode("ascii"))
@@ -33,7 +43,15 @@ def decode_declaration_id(identifier: str) -> dict[str, str]:
     if not isinstance(path, str) or not isinstance(symbol, str):
         raise LeanToolError("Invalid declaration id payload.")
 
-    return {"path": path, "symbol": symbol}
+    raw_line = payload.get("line")
+    if raw_line is None:
+        line: int | None = None
+    elif isinstance(raw_line, int) and raw_line >= 1:
+        line = raw_line
+    else:
+        raise LeanToolError("Invalid declaration id payload.")
+
+    return {"path": path, "symbol": symbol, "line": line}
 
 
 def build_canonical_url(identifier: str) -> str:
@@ -90,7 +108,11 @@ def search_payload_from_local_results(
         relative_path = _workspace_relative_if_fetchable(workspace_root, item.file)
         if relative_path is None:
             continue
-        identifier = encode_declaration_id(path=relative_path, symbol=item.name)
+        identifier = encode_declaration_id(
+            path=relative_path,
+            symbol=item.name,
+            line=item.line,
+        )
         docs.append(
             SearchResultDoc(
                 id=identifier,
@@ -101,15 +123,57 @@ def search_payload_from_local_results(
     return SearchPayload(results=docs)
 
 
+def _extract_declaration_text_from_line(*, content: str, line: int) -> str:
+    lines = content.splitlines()
+    if not lines:
+        raise LeanToolError("Declaration source file is empty.")
+
+    if line < 1 or line > len(lines):
+        raise LeanToolError("Declaration id line is out of range.")
+
+    start_idx = line - 1
+    lookahead_end = min(len(lines), start_idx + 6)
+    resolved_start = None
+    for idx in range(start_idx, lookahead_end):
+        if _DECLARATION_START_PATTERN.match(lines[idx]):
+            resolved_start = idx
+            break
+
+    if resolved_start is None:
+        raise LeanToolError("Could not resolve declaration start line from fetch id.")
+
+    end_idx = len(lines)
+    for idx in range(resolved_start + 1, len(lines)):
+        if _DECLARATION_START_PATTERN.match(lines[idx]):
+            end_idx = idx
+            break
+
+    selected_lines = lines[resolved_start:end_idx]
+    while selected_lines and not selected_lines[-1].strip():
+        selected_lines.pop()
+
+    selected = "\n".join(selected_lines)
+    if not selected.strip():
+        raise LeanToolError("Resolved declaration text is empty.")
+    return selected
+
+
 def declaration_text_for_id(
     *,
     workspace_root: Path,
-    client: LeanLSPClient,
+    client: LeanLSPClient | None,
     identifier: str,
 ) -> FetchPayload:
     decoded = decode_declaration_id(identifier)
-    rel_path = decoded["path"]
-    symbol = decoded["symbol"]
+    rel_path_raw = decoded["path"]
+    symbol_raw = decoded["symbol"]
+    line_raw = decoded["line"]
+    if not isinstance(rel_path_raw, str) or not isinstance(symbol_raw, str):
+        raise LeanToolError("Invalid declaration id payload.")
+
+    rel_path = rel_path_raw
+    symbol = symbol_raw
+    line = line_raw if isinstance(line_raw, int) else None
 
     abs_path = (workspace_root / rel_path).resolve()
     if not abs_path.exists():
@@ -119,15 +183,27 @@ def declaration_text_for_id(
     if not rel_to_project:
         raise LeanToolError("Declaration id path is outside workspace root.")
 
-    # Request declaration range via LSP, then extract line range.
-    decl_range = get_declaration_range(client, rel_to_project, symbol)
     content = get_file_contents(str(abs_path))
 
+    if line is not None:
+        selected = _extract_declaration_text_from_line(content=content, line=line)
+        return FetchPayload(
+            id=identifier,
+            title=symbol,
+            text=selected,
+            url=build_canonical_url(identifier),
+            metadata={"path": rel_path, "symbol": symbol, "line": str(line)},
+        )
+
+    if client is None:
+        raise LeanToolError("Fetch id requires Lean client initialization.")
+
+    # Legacy IDs do not include a line anchor; resolve via LSP declaration range.
+    decl_range = get_declaration_range(client, rel_to_project, symbol)
     if decl_range is None:
         raise LeanToolError(
             "Could not resolve declaration range for fetch id; refusing full-file fallback."
         )
-
     start_line, end_line = decl_range
     lines = content.splitlines()
     start_idx = max(start_line - 1, 0)
