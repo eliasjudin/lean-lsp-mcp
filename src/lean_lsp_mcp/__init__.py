@@ -11,8 +11,18 @@ def main() -> int:
         default="streamable-http",
         help="Transport method for the server. Default is 'streamable-http'.",
     )
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address")
-    parser.add_argument("--port", type=int, default=8000, help="Host port")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=None,
+        help="Host address (overrides LEAN_BIND_HOST)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Host port (overrides LEAN_BIND_PORT)",
+    )
     parser.add_argument(
         "--workspace-root",
         type=str,
@@ -58,8 +68,10 @@ def main() -> int:
         os.environ["LEAN_SERVER_PROFILE"] = args.profile
     if args.auth_mode:
         os.environ["LEAN_AUTH_MODE"] = args.auth_mode
-    os.environ["LEAN_BIND_HOST"] = args.host
-    os.environ["LEAN_BIND_PORT"] = str(args.port)
+    if args.host is not None:
+        os.environ["LEAN_BIND_HOST"] = args.host
+    if args.port is not None:
+        os.environ["LEAN_BIND_PORT"] = str(args.port)
     if args.loogle_local:
         os.environ["LEAN_LOOGLE_LOCAL"] = "true"
     if args.loogle_cache_dir:
@@ -72,7 +84,9 @@ def main() -> int:
     # Import after env overrides so server initialization sees final config.
     from lean_lsp_mcp.server import mcp
 
-    mcp.settings.host = args.host
-    mcp.settings.port = args.port
+    if args.host is not None:
+        mcp.settings.host = args.host
+    if args.port is not None:
+        mcp.settings.port = args.port
     mcp.run(transport=args.transport)
     return 0
