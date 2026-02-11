@@ -32,6 +32,19 @@ from lean_lsp_mcp.tool_utils import resolve_and_prepare_file, safe_report_progre
 from lean_lsp_mcp.utils import LeanToolError
 
 
+@rate_limited("loogle", max_requests=3, per_seconds=30)
+async def _loogle_remote_rate_limited(
+    ctx: Context,
+    query: str,
+    num_results: int,
+) -> LoogleResults:
+    await safe_report_progress(ctx, progress=1, total=10, message="Awaiting loogle")
+    result = await asyncio.to_thread(loogle_remote, query, num_results)
+    if isinstance(result, str):
+        raise LeanToolError(result)
+    return LoogleResults(items=result)
+
+
 def register_external_tools(
     mcp: FastMCP,
     *,
@@ -134,7 +147,6 @@ def register_external_tools(
             openWorldHint=True,
         ),
     )
-    @rate_limited("loogle", max_requests=3, per_seconds=30)
     async def loogle(
         ctx: Context,
         query: Annotated[
@@ -166,11 +178,9 @@ def register_external_tools(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Local loogle failed: %s, falling back to remote", exc)
 
-        await safe_report_progress(ctx, progress=1, total=10, message="Awaiting loogle")
-        result = await asyncio.to_thread(loogle_remote, query, num_results)
-        if isinstance(result, str):
-            raise LeanToolError(result)
-        return LoogleResults(items=result)
+        return await _loogle_remote_rate_limited(
+            ctx=ctx, query=query, num_results=num_results
+        )
 
     @mcp.tool(
         "leanfinder",
