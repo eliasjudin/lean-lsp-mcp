@@ -23,6 +23,12 @@ DEFAULT_TRANSPORT_ALLOWED_ORIGINS = [
     "https://chatgpt.com",
     "https://chat.openai.com",
 ]
+DEFAULT_CORS_ALLOW_ORIGINS = [
+    "http://127.0.0.1",
+    "http://localhost",
+    "http://[::1]",
+]
+DEFAULT_CORS_ALLOW_ORIGIN_REGEX = r"^https?://(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$"
 DEFAULT_CORS_ALLOW_METHODS = ["GET", "POST", "DELETE", "OPTIONS"]
 DEFAULT_CORS_ALLOW_HEADERS = ["content-type", "mcp-session-id", "authorization"]
 DEFAULT_CORS_EXPOSE_HEADERS = ["Mcp-Session-Id", "mcp-session-id"]
@@ -134,6 +140,10 @@ def build_transport_security(
     )
 
 
+def _is_local_bind_host(bind_host: str) -> bool:
+    return bind_host.strip().lower() in _LOCAL_BIND_HOSTS
+
+
 @dataclass(frozen=True)
 class CORSConfig:
     allow_origins: list[str]
@@ -147,12 +157,13 @@ class CORSConfig:
 
 def load_cors_config() -> CORSConfig:
     allow_origins = _split_csv(os.environ.get("LEAN_CORS_ALLOW_ORIGINS"))
-    if not allow_origins:
-        allow_origins = ["*"]
-
     allow_origin_regex = (
         os.environ.get("LEAN_CORS_ALLOW_ORIGIN_REGEX", "").strip() or None
     )
+    if not allow_origins and allow_origin_regex is None:
+        allow_origins = list(DEFAULT_CORS_ALLOW_ORIGINS)
+        allow_origin_regex = DEFAULT_CORS_ALLOW_ORIGIN_REGEX
+
     allow_methods = _split_csv(os.environ.get("LEAN_CORS_ALLOW_METHODS"))
     if not allow_methods:
         allow_methods = list(DEFAULT_CORS_ALLOW_METHODS)
@@ -182,4 +193,22 @@ def load_cors_config() -> CORSConfig:
         expose_headers=expose_headers,
         allow_credentials=allow_credentials,
         max_age=max_age,
+    )
+
+
+def warn_on_wildcard_cors_for_remote_bind(
+    bind_host: str,
+    cors_config: CORSConfig,
+    *,
+    logger,
+) -> None:
+    if "*" not in cors_config.allow_origins:
+        return
+    if _is_local_bind_host(bind_host):
+        return
+    logger.warning(
+        "CORS allow_origins includes wildcard '*' while binding to %s. "
+        "This permits any website origin to call the server. "
+        "Set LEAN_CORS_ALLOW_ORIGINS to an explicit allowlist for remote binds.",
+        bind_host,
     )

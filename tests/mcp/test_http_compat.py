@@ -53,8 +53,9 @@ async def test_cors_preflight_supported_for_mcp_and_nested_paths(
     async with remote_client_factory(
         transport="streamable-http", profile="read", auth_mode="none"
     ) as client:
+        origin = "http://localhost:3000"
         headers = {
-            "Origin": "https://chatgpt.com",
+            "Origin": origin,
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "content-type,mcp-session-id",
         }
@@ -66,10 +67,7 @@ async def test_cors_preflight_supported_for_mcp_and_nested_paths(
             headers=headers,
         )
         assert status_mcp in {200, 204}
-        assert response_headers_mcp.get("access-control-allow-origin") in {
-            "*",
-            "https://chatgpt.com",
-        }
+        assert response_headers_mcp.get("access-control-allow-origin") == origin
 
         status_nested, response_headers_nested, _ = await asyncio.to_thread(
             _http_request,
@@ -78,10 +76,7 @@ async def test_cors_preflight_supported_for_mcp_and_nested_paths(
             headers=headers,
         )
         assert status_nested in {200, 204}
-        assert response_headers_nested.get("access-control-allow-origin") in {
-            "*",
-            "https://chatgpt.com",
-        }
+        assert response_headers_nested.get("access-control-allow-origin") == origin
 
 
 @pytest.mark.asyncio

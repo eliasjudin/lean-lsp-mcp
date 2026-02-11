@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -97,7 +98,7 @@ class OIDCJWTVerifier:
         self._jwks: dict[str, Any] | None = None
         self._jwks_fetched_at = 0.0
         self._jwks_ttl = 300.0
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
     async def verify(self, token: str) -> AccessToken | None:
         try:
@@ -221,23 +222,29 @@ class OIDCJWTVerifier:
 
     def _get_jwks_sync(self) -> dict[str, Any]:
         now = time.time()
-        if self._jwks is not None and (now - self._jwks_fetched_at) < self._jwks_ttl:
-            return self._jwks
+        cached = self._jwks
+        if cached is not None and (now - self._jwks_fetched_at) < self._jwks_ttl:
+            return cached
 
-        # Best effort lock-free refresh for sync call path (safe under duplicate fetches).
-        discovery_url = self._discovery_url()
-        metadata = self._fetch_json_sync(discovery_url)
-        jwks_uri = metadata.get("jwks_uri")
-        if not isinstance(jwks_uri, str) or not jwks_uri:
-            raise ValueError("OIDC discovery document missing jwks_uri")
+        with self._lock:
+            now = time.time()
+            cached = self._jwks
+            if cached is not None and (now - self._jwks_fetched_at) < self._jwks_ttl:
+                return cached
 
-        jwks = self._fetch_json_sync(jwks_uri)
-        if not isinstance(jwks, dict):
-            raise ValueError("Invalid JWKS payload")
+            discovery_url = self._discovery_url()
+            metadata = self._fetch_json_sync(discovery_url)
+            jwks_uri = metadata.get("jwks_uri")
+            if not isinstance(jwks_uri, str) or not jwks_uri:
+                raise ValueError("OIDC discovery document missing jwks_uri")
 
-        self._jwks = jwks
-        self._jwks_fetched_at = now
-        return jwks
+            jwks = self._fetch_json_sync(jwks_uri)
+            if not isinstance(jwks, dict):
+                raise ValueError("Invalid JWKS payload")
+
+            self._jwks = jwks
+            self._jwks_fetched_at = now
+            return jwks
 
     def _discovery_url(self) -> str:
         if self.issuer_url.endswith("/.well-known/openid-configuration"):

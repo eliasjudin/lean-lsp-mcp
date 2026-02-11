@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import urllib.request
 from collections.abc import Callable
 from typing import AsyncContextManager
@@ -154,6 +155,65 @@ def test_oidc_key_from_jwk_uses_algorithm_specific_parser(
     key = verifier._key_from_jwk({"kid": "ec-kid", "kty": "EC"}, "ES256")
     assert key == {"parsed": True}
     assert captured["jwk"] == {"kid": "ec-kid", "kty": "EC"}
+
+
+@pytest.mark.asyncio
+async def test_oidc_jwks_refresh_is_single_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verifier = _oidc_verifier()
+    verifier._jwks = None
+    verifier._jwks_fetched_at = 0.0
+    verifier._jwks_ttl = 300.0
+
+    call_counts = {"discovery": 0, "jwks": 0}
+
+    def _fake_fetch(url: str) -> dict[str, object]:
+        time.sleep(0.01)
+        if url.endswith("/.well-known/openid-configuration"):
+            call_counts["discovery"] += 1
+            return {"jwks_uri": "https://issuer.example.invalid/jwks"}
+        if url.endswith("/jwks"):
+            call_counts["jwks"] += 1
+            return {"keys": [{"kid": "rsa-kid", "kty": "RSA"}]}
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(verifier, "_fetch_json_sync", _fake_fetch)
+
+    results = await asyncio.gather(
+        *(asyncio.to_thread(verifier._get_jwks_sync) for _ in range(8))
+    )
+
+    assert all(result == {"keys": [{"kid": "rsa-kid", "kty": "RSA"}]} for result in results)
+    assert call_counts["discovery"] == 1
+    assert call_counts["jwks"] == 1
+
+
+def test_oidc_jwks_cached_within_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    verifier = _oidc_verifier()
+    verifier._jwks = None
+    verifier._jwks_fetched_at = 0.0
+    verifier._jwks_ttl = 300.0
+
+    call_counts = {"discovery": 0, "jwks": 0}
+
+    def _fake_fetch(url: str) -> dict[str, object]:
+        if url.endswith("/.well-known/openid-configuration"):
+            call_counts["discovery"] += 1
+            return {"jwks_uri": "https://issuer.example.invalid/jwks"}
+        if url.endswith("/jwks"):
+            call_counts["jwks"] += 1
+            return {"keys": [{"kid": "rsa-kid", "kty": "RSA"}]}
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(verifier, "_fetch_json_sync", _fake_fetch)
+
+    first = verifier._get_jwks_sync()
+    second = verifier._get_jwks_sync()
+
+    assert first == second
+    assert call_counts["discovery"] == 1
+    assert call_counts["jwks"] == 1
 
 
 @pytest.mark.asyncio

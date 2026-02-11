@@ -34,6 +34,7 @@ from lean_lsp_mcp.http_config import (
     bind_port_from_env,
     build_transport_security,
     load_cors_config,
+    warn_on_wildcard_cors_for_remote_bind,
 )
 from lean_lsp_mcp.loogle import LoogleManager
 from lean_lsp_mcp.profiles import ServerProfile, get_server_profile
@@ -89,6 +90,7 @@ logger = get_logger(__name__)
 BIND_HOST = bind_host_from_env()
 BIND_PORT = bind_port_from_env()
 CORS_CONFIG = load_cors_config()
+warn_on_wildcard_cors_for_remote_bind(BIND_HOST, CORS_CONFIG, logger=logger)
 TRANSPORT_SECURITY = build_transport_security(BIND_HOST, logger=logger)
 
 _RG_AVAILABLE, _RG_MESSAGE = check_ripgrep_status()
