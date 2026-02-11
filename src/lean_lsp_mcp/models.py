@@ -251,9 +251,10 @@ class AppHomeResult(BaseModel):
     app_name: str = Field(description="App display name")
     profile: str = Field(description="Active server profile")
     auth_mode: str = Field(description="Active authentication mode")
+    transport: str = Field(description="Active transport protocol")
     workspace_root: str = Field(description="Workspace root path")
     template_uri: str = Field(description="MCP app template URI")
-    transport_paths: AppTransportPaths = Field(
-        description="Available MCP transport mount paths"
+    transport_paths: Optional[AppTransportPaths] = Field(
+        default=None, description="Available MCP transport mount paths (HTTP only)"
     )
     tool_groups: AppToolGroups = Field(description="Tool groups by capability")

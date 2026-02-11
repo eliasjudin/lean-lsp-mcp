@@ -33,9 +33,9 @@ APP_METADATA_REQUIRED_KEYS = {
     "app_name",
     "profile",
     "auth_mode",
+    "transport",
     "workspace_root",
     "template_uri",
-    "transport_paths",
     "tool_groups",
 }
 
@@ -249,16 +249,19 @@ def assert_app_home_metadata(
         "template_uri must be a non-empty string."
     )
 
-    transport_paths = metadata["transport_paths"]
-    assert isinstance(transport_paths, dict), "transport_paths must be an object."
-    missing_transport = APP_METADATA_TRANSPORT_KEYS.difference(transport_paths.keys())
-    assert not missing_transport, (
-        f"Missing transport path keys: {sorted(missing_transport)}"
-    )
-    assert transport_paths["streamable_http"] == "/mcp", (
-        "transport_paths.streamable_http must be '/mcp'."
-    )
-    assert transport_paths["sse"] == "/sse", "transport_paths.sse must be '/sse'."
+    transport_paths = metadata.get("transport_paths")
+    if transport_paths is not None:
+        assert isinstance(transport_paths, dict), "transport_paths must be an object."
+        missing_transport = APP_METADATA_TRANSPORT_KEYS.difference(
+            transport_paths.keys()
+        )
+        assert not missing_transport, (
+            f"Missing transport path keys: {sorted(missing_transport)}"
+        )
+        assert transport_paths["streamable_http"] == "/mcp", (
+            "transport_paths.streamable_http must be '/mcp'."
+        )
+        assert transport_paths["sse"] == "/sse", "transport_paths.sse must be '/sse'."
 
     tool_groups = metadata["tool_groups"]
     assert isinstance(tool_groups, dict), "tool_groups must be an object."

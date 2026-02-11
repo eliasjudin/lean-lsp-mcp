@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 
 
@@ -7,7 +8,7 @@ def main() -> int:
     parser.add_argument(
         "--transport",
         type=str,
-        choices=["streamable-http", "sse"],
+        choices=["stdio", "streamable-http", "sse"],
         default="streamable-http",
         help="Transport method for the server. Default is 'streamable-http'.",
     )
@@ -62,6 +63,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    is_stdio = args.transport == "stdio"
+
+    if is_stdio:
+        _logger = logging.getLogger("lean_lsp_mcp")
+        if args.host is not None:
+            _logger.warning("--host is ignored in stdio transport mode")
+        if args.port is not None:
+            _logger.warning("--port is ignored in stdio transport mode")
+        if args.auth_mode and args.auth_mode != "none":
+            _logger.warning("--auth-mode is ignored in stdio transport mode")
+
+    os.environ["LEAN_TRANSPORT"] = args.transport
+
     if args.workspace_root:
         os.environ["LEAN_WORKSPACE_ROOT"] = args.workspace_root
     if args.profile:
@@ -84,9 +98,10 @@ def main() -> int:
     # Import after env overrides so server initialization sees final config.
     from lean_lsp_mcp.server import mcp
 
-    if args.host is not None:
-        mcp.settings.host = args.host
-    if args.port is not None:
-        mcp.settings.port = args.port
+    if not is_stdio:
+        if args.host is not None:
+            mcp.settings.host = args.host
+        if args.port is not None:
+            mcp.settings.port = args.port
     mcp.run(transport=args.transport)
     return 0

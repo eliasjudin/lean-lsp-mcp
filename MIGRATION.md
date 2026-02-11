@@ -45,11 +45,16 @@ New:
 ## Transport Changes
 
 Supported transports:
-- `streamable-http`
+- `streamable-http` (default)
 - `sse`
+- `stdio` (local only — auth, CORS, and HTTP routes are disabled)
 
-Removed:
-- `stdio` as an officially supported remote transport.
+Launch with stdio for local editor integrations:
+```bash
+lean-lsp-mcp --transport stdio --workspace-root /path/to/project
+```
+
+HTTP-only flags (`--host`, `--port`, `--auth-mode`) are ignored in stdio mode and produce a warning if set.
 
 ## Authentication Changes
 

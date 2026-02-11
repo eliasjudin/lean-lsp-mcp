@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import os
+
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
@@ -20,6 +22,8 @@ def register_app_tools(
     read_tool_names: Sequence[str],
     write_tool_names: Sequence[str],
 ) -> None:
+    transport = os.environ.get("LEAN_TRANSPORT", "streamable-http")
+
     @mcp.tool(
         "app_home",
         annotations=ToolAnnotations(
@@ -40,4 +44,5 @@ def register_app_tools(
             workspace_root=app_ctx.workspace_root,
             read_tool_names=read_tool_names,
             write_tool_names=write_tool_names,
+            transport=transport,
         )

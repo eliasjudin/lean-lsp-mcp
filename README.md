@@ -5,7 +5,7 @@ Remote-first Lean MCP server for OpenAI Responses/connector workflows.
 ## Breaking Changes
 
 - Legacy `lean_*` tool names are removed.
-- Supported transports are only `streamable-http` and `sse`.
+- Supported transports: `streamable-http`, `sse`, and `stdio` (local only).
 - File tools require workspace-relative `path`.
 - Single-tenant workspace per process (`LEAN_WORKSPACE_ROOT`).
 - Tool exposure is split by profile (`read` vs `write`).
@@ -125,6 +125,27 @@ SSE transport:
 ```bash
 uv run python -m lean_lsp_mcp --transport sse --profile read
 # http://127.0.0.1:8000/sse
+```
+
+Stdio transport (for local editor integrations — auth, CORS, and HTTP routes are disabled):
+
+```bash
+uv run python -m lean_lsp_mcp --transport stdio --workspace-root /path/to/lean/project
+```
+
+Editor config example (VS Code / Cursor `settings.json`):
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "lean-lsp": {
+        "command": "uv",
+        "args": ["run", "python", "-m", "lean_lsp_mcp", "--transport", "stdio", "--workspace-root", "${workspaceFolder}"]
+      }
+    }
+  }
+}
 ```
 
 With auth/local-loogle/REPL overrides:

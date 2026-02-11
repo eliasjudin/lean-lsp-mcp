@@ -49,6 +49,7 @@ def build_app_home_result(
     workspace_root: Path | str,
     read_tool_names: Sequence[str],
     write_tool_names: Sequence[str],
+    transport: str = "streamable-http",
 ) -> AppHomeResult:
     read_names = list(read_tool_names)
     write_names = list(write_tool_names)
@@ -56,13 +57,18 @@ def build_app_home_result(
     if write_tools_enabled(profile):
         enabled_names.extend(write_names)
 
+    is_stdio = transport == "stdio"
+
     return AppHomeResult(
         app_name=app_config.app_name,
         profile=profile.value,
-        auth_mode=auth_config.mode.value,
+        auth_mode="none" if is_stdio else auth_config.mode.value,
+        transport=transport,
         workspace_root=str(Path(workspace_root)),
         template_uri=app_config.template_uri,
-        transport_paths=AppTransportPaths(
+        transport_paths=None
+        if is_stdio
+        else AppTransportPaths(
             streamable_http=app_config.streamable_http_path,
             sse=app_config.sse_path,
         ),
@@ -89,27 +95,33 @@ def _workspace_root_from_env() -> Path:
 
 def render_app_home_markdown(app_home: AppHomeResult) -> str:
     metadata_json = app_home.model_dump_json(indent=2)
-    return "\n".join(
+    lines = [
+        f"# {app_home.app_name}",
+        "",
+        "## Metadata",
+        "```json",
+        metadata_json,
+        "```",
+        "",
+        "## Server",
+        f"- Profile: `{app_home.profile}`",
+        f"- Auth mode: `{app_home.auth_mode}`",
+        f"- Transport: `{app_home.transport}`",
+        f"- Workspace root: `{app_home.workspace_root}`",
+        "",
+        "## App Surface",
+        f"- Home template URI: `{app_home.template_uri}`",
+    ]
+    if app_home.transport_paths is not None:
+        lines.append(
+            "- Transport paths: "
+            f"`{app_home.transport_paths.streamable_http}` (streamable-http), "
+            f"`{app_home.transport_paths.sse}` (sse)"
+        )
+    else:
+        lines.append("- Transport paths: _n/a (stdio)_")
+    lines.extend(
         [
-            f"# {app_home.app_name}",
-            "",
-            "## Metadata",
-            "```json",
-            metadata_json,
-            "```",
-            "",
-            "## Server",
-            f"- Profile: `{app_home.profile}`",
-            f"- Auth mode: `{app_home.auth_mode}`",
-            f"- Workspace root: `{app_home.workspace_root}`",
-            "",
-            "## App Surface",
-            f"- Home template URI: `{app_home.template_uri}`",
-            (
-                "- Transport paths: "
-                f"`{app_home.transport_paths.streamable_http}` (streamable-http), "
-                f"`{app_home.transport_paths.sse}` (sse)"
-            ),
             "",
             "## Tools",
             f"- Read: {_tool_list_markdown(app_home.tool_groups.read)}",
@@ -117,6 +129,7 @@ def render_app_home_markdown(app_home: AppHomeResult) -> str:
             f"- Enabled: {_tool_list_markdown(app_home.tool_groups.enabled)}",
         ]
     )
+    return "\n".join(lines)
 
 
 def register_app_home_resource(
@@ -127,6 +140,7 @@ def register_app_home_resource(
     auth_config: AuthConfig,
     read_tool_names: Sequence[str],
     write_tool_names: Sequence[str],
+    transport: str = "streamable-http",
 ) -> None:
     def _render_home_markdown() -> str:
         app_home = build_app_home_result(
@@ -136,6 +150,7 @@ def register_app_home_resource(
             workspace_root=_workspace_root_from_env(),
             read_tool_names=read_tool_names,
             write_tool_names=write_tool_names,
+            transport=transport,
         )
         return render_app_home_markdown(app_home)
 
