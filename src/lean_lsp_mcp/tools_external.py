@@ -83,7 +83,16 @@ def register_external_tools(
             raise LeanToolError(f"Search failed: {exc}") from exc
 
         items = [
-            LocalSearchResult(name=r["name"], kind=r["kind"], file=r["file"])
+            LocalSearchResult(
+                name=r["name"],
+                kind=r["kind"],
+                file=r["file"],
+                line=(
+                    r["line"]
+                    if isinstance(r.get("line"), int) and r["line"] >= 1
+                    else None
+                ),
+            )
             for r in raw_results
         ]
         return LocalSearchResults(items=items)
@@ -92,7 +101,7 @@ def register_external_tools(
         "leansearch",
         annotations=ToolAnnotations(
             title="LeanSearch",
-            readOnlyHint=False,
+            readOnlyHint=True,
             destructiveHint=False,
             idempotentHint=True,
             openWorldHint=True,
@@ -141,7 +150,7 @@ def register_external_tools(
         "loogle",
         annotations=ToolAnnotations(
             title="Loogle",
-            readOnlyHint=False,
+            readOnlyHint=True,
             destructiveHint=False,
             idempotentHint=True,
             openWorldHint=True,
@@ -186,7 +195,7 @@ def register_external_tools(
         "leanfinder",
         annotations=ToolAnnotations(
             title="Lean Finder",
-            readOnlyHint=False,
+            readOnlyHint=True,
             destructiveHint=False,
             idempotentHint=True,
             openWorldHint=True,
@@ -244,7 +253,7 @@ def register_external_tools(
         "state_search",
         annotations=ToolAnnotations(
             title="State Search",
-            readOnlyHint=False,
+            readOnlyHint=True,
             destructiveHint=False,
             idempotentHint=True,
             openWorldHint=True,
@@ -299,7 +308,7 @@ def register_external_tools(
         "hammer_premise",
         annotations=ToolAnnotations(
             title="Hammer Premises",
-            readOnlyHint=False,
+            readOnlyHint=True,
             destructiveHint=False,
             idempotentHint=True,
             openWorldHint=True,
