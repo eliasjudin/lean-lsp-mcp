@@ -23,7 +23,7 @@ from lean_lsp_mcp.app_surface import (
     app_surface_config_from_server,
     register_app_home_resource,
 )
-from lean_lsp_mcp.auth import auth_settings_and_verifier
+from lean_lsp_mcp.auth import AuthConfig, AuthMode, auth_settings_and_verifier
 from lean_lsp_mcp.auth_routes import (
     mixed_auth_error_for_write_tool,
     register_oauth_metadata_route,
@@ -87,11 +87,20 @@ else:
 
 logger = get_logger(__name__)
 
-BIND_HOST = bind_host_from_env()
-BIND_PORT = bind_port_from_env()
-CORS_CONFIG = load_cors_config()
-warn_on_wildcard_cors_for_remote_bind(BIND_HOST, CORS_CONFIG, logger=logger)
-TRANSPORT_SECURITY = build_transport_security(BIND_HOST, logger=logger)
+IS_STDIO = os.environ.get("LEAN_TRANSPORT", "") == "stdio"
+
+if IS_STDIO:
+    # Stdio transport ignores HTTP bind settings; avoid parsing unrelated env vars.
+    BIND_HOST = "127.0.0.1"
+    BIND_PORT = 8000
+    CORS_CONFIG = None
+    TRANSPORT_SECURITY = None
+else:
+    BIND_HOST = bind_host_from_env()
+    BIND_PORT = bind_port_from_env()
+    CORS_CONFIG = load_cors_config()
+    warn_on_wildcard_cors_for_remote_bind(BIND_HOST, CORS_CONFIG, logger=logger)
+    TRANSPORT_SECURITY = build_transport_security(BIND_HOST, logger=logger)
 
 _RG_AVAILABLE, _RG_MESSAGE = check_ripgrep_status()
 SERVER_PROFILE = get_server_profile()
@@ -198,7 +207,18 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
             await repl.close()
 
 
-AUTH_CONFIG, auth_settings, token_verifier = auth_settings_and_verifier()
+if IS_STDIO:
+    AUTH_CONFIG = AuthConfig(
+        mode=AuthMode.NONE,
+        issuer_url=None,
+        resource_server_url=None,
+        required_scopes=[],
+        bearer_token=None,
+    )
+    auth_settings = None
+    token_verifier = None
+else:
+    AUTH_CONFIG, auth_settings, token_verifier = auth_settings_and_verifier()
 
 
 class LeanFastMCP(FastMCP):
@@ -214,17 +234,20 @@ class LeanFastMCP(FastMCP):
             if isinstance(input_schema, dict) and input_schema.get("type") == "object":
                 input_schema["additionalProperties"] = False
 
-            security_schemes = security_schemes_for_tool(
-                auth_config=AUTH_CONFIG,
-                write_tool_names=WRITE_TOOL_NAMES,
-                tool_name=tool.name,
-            )
-            if security_schemes is not None:
-                payload["securitySchemes"] = security_schemes
+            if not IS_STDIO:
+                security_schemes = security_schemes_for_tool(
+                    auth_config=AUTH_CONFIG,
+                    write_tool_names=WRITE_TOOL_NAMES,
+                    tool_name=tool.name,
+                )
+                if security_schemes is not None:
+                    payload["securitySchemes"] = security_schemes
             result.append(MCPTool.model_validate(payload))
         return result
 
     def _with_http_middleware(self, app):
+        if CORS_CONFIG is None:
+            return app
         if getattr(app.state, "lean_http_middleware_applied", False):
             return app
 
@@ -255,9 +278,10 @@ mcp_kwargs = dict(
     lifespan=app_lifespan,
     host=BIND_HOST,
     port=BIND_PORT,
-    transport_security=TRANSPORT_SECURITY,
 )
-if auth_settings and token_verifier:
+if TRANSPORT_SECURITY is not None:
+    mcp_kwargs["transport_security"] = TRANSPORT_SECURITY
+if not IS_STDIO and auth_settings and token_verifier:
     mcp_kwargs["auth"] = auth_settings
     mcp_kwargs["token_verifier"] = token_verifier
 
@@ -271,20 +295,23 @@ register_app_home_resource(
     auth_config=AUTH_CONFIG,
     read_tool_names=READ_TOOL_NAMES,
     write_tool_names=WRITE_TOOL_NAMES,
+    transport=os.environ.get("LEAN_TRANSPORT", "streamable-http"),
 )
 
-register_oauth_metadata_route(mcp, auth_config=AUTH_CONFIG)
+if not IS_STDIO:
+    register_oauth_metadata_route(mcp, auth_config=AUTH_CONFIG)
 
-
-@mcp.custom_route("/", methods=["GET"], include_in_schema=False)
-async def health(_request: Request) -> Response:
-    return PlainTextResponse("Lean LSP MCP server")
+    @mcp.custom_route("/", methods=["GET"], include_in_schema=False)
+    async def health(_request: Request) -> Response:
+        return PlainTextResponse("Lean LSP MCP server")
 
 
 async def _mixed_auth_checker(
     ctx: Context,
     tool_name: str,
 ):
+    if IS_STDIO:
+        return None
     return await mixed_auth_error_for_write_tool(
         ctx,
         tool_name=tool_name,
