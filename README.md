@@ -12,6 +12,7 @@ Remote-first Lean MCP server for OpenAI Responses/connector workflows.
 
 Migration details: [MIGRATION.md](MIGRATION.md)
 Release notes: [CHANGELOG.md](CHANGELOG.md)
+Companion project: `lean-live-app` is maintained separately and is not bundled in this repository.
 
 ## Why this shape
 
@@ -55,7 +56,11 @@ export LEAN_WORKSPACE_ROOT=/absolute/path/to/lean/project
 - `LEAN_WORKSPACE_ROOT` (required): single-tenant workspace root.
 - `LEAN_SERVER_PROFILE` (`read`/`write`, default `read`): controls write tool exposure.
 - `LEAN_BIND_HOST` (default `127.0.0.1`) and `LEAN_BIND_PORT` (default `8000`): HTTP bind address.
-- `LEAN_PUBLIC_BASE_URL` (optional): canonical HTTPS base for `search`/`fetch` citation URLs; falls back to `LEAN_OAUTH_RESOURCE_SERVER_URL` when unset.
+- `LEAN_CANONICAL_URL_SCHEME` (`decl_path`/`lean4web`, default `decl_path`): citation URL strategy for `search`/`fetch`.
+- `LEAN_PUBLIC_BASE_URL` (optional, `decl_path` mode): canonical HTTPS base for citation URLs; falls back to `LEAN_OAUTH_RESOURCE_SERVER_URL` when unset.
+- `LEAN_LIVE_BASE_URL` (optional, `lean4web` mode, default `https://live.lean-lang.org/`): public Lean playground base URL.
+- `LEAN_LIVE_PROJECT` (optional, `lean4web` mode, default `mathlib-v4.24.0`): `project` hash parameter for live links.
+- `LEAN_LIVE_CODE_PARAM` (optional, `lean4web` mode, default `code`): code payload key (`code` or `codez`; `codez` requires optional Python package `lzstring`).
 - `LEAN_LOG_LEVEL` (default `INFO`) and `LEAN_LOG_FILE_CONFIG` (optional): runtime logging controls.
 
 ## Authentication
@@ -236,6 +241,14 @@ Both tools return:
 }
 ```
 
+In `LEAN_CANONICAL_URL_SCHEME=lean4web`, URLs are generated as hash links such as:
+
+```text
+https://live.lean-lang.org/#project=mathlib-v4.24.0&code=...
+```
+
+This avoids local port exposure for citations and keeps fetchable references fully online.
+
 `fetch` payload (used for both `content[0].text` JSON and `structuredContent`):
 
 ```json
@@ -253,8 +266,14 @@ Both tools return:
 
 `search` is workspace-scoped for low latency and `fetch` compatibility.
 
-Set `LEAN_PUBLIC_BASE_URL` to a canonical HTTPS base used for citations.
-If unset, the server falls back to `LEAN_OAUTH_RESOURCE_SERVER_URL`; for local-only workflows it can emit `lean://decl/...`.
+`decl_path` mode:
+- Set `LEAN_PUBLIC_BASE_URL` to a canonical HTTPS base used for citations.
+- If unset, the server falls back to `LEAN_OAUTH_RESOURCE_SERVER_URL`; for local-only workflows it can emit `lean://decl/...`.
+
+`lean4web` mode:
+- Set `LEAN_CANONICAL_URL_SCHEME=lean4web` to emit `live.lean-lang.org` links.
+- Use `LEAN_LIVE_PROJECT` to pin the target environment (for example `mathlib-v4.24.0`).
+- Use `LEAN_LIVE_CODE_PARAM=codez` only if `lzstring` is installed; otherwise keep `code`.
 
 ## Remote trust boundaries
 
