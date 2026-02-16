@@ -12,8 +12,6 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from lean_lsp_mcp.app_surface import AppSurfaceConfig, build_app_home_result
 from lean_lsp_mcp.auth import AuthConfig, AuthMode
 from lean_lsp_mcp.models import AppHomeResult
