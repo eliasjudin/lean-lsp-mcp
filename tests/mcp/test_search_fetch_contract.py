@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from typing import AsyncContextManager
 
 import pytest
@@ -146,6 +148,84 @@ def test_build_canonical_url_allows_https(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("LEAN_PUBLIC_BASE_URL", "https://docs.example.com")
     url = build_canonical_url("abc")
     assert url == "https://docs.example.com/decl/abc"
+
+
+def test_build_canonical_url_rejects_invalid_scheme_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LEAN_CANONICAL_URL_SCHEME", "invalid")
+    with pytest.raises(LeanToolError):
+        build_canonical_url("abc")
+
+
+def test_build_canonical_url_lean4web_uses_hash_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LEAN_CANONICAL_URL_SCHEME", "lean4web")
+    monkeypatch.setenv("LEAN_LIVE_BASE_URL", "https://live.lean-lang.org/")
+    monkeypatch.setenv("LEAN_LIVE_PROJECT", "mathlib-v4.24.0")
+    monkeypatch.setenv("LEAN_LIVE_CODE_PARAM", "code")
+
+    identifier = encode_declaration_id(
+        path="Mathlib/Init/Prelude.lean", symbol="Nat.succ", line=1
+    )
+    url = build_canonical_url(identifier)
+    parsed = urlparse(url)
+    params = parse_qs(parsed.fragment)
+
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "live.lean-lang.org"
+    assert params["project"] == ["mathlib-v4.24.0"]
+    assert "code" in params
+    assert "#check Nat.succ" in params["code"][0]
+
+
+def test_fetch_line_anchored_id_lean4web_url_embeds_declaration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LEAN_CANONICAL_URL_SCHEME", "lean4web")
+    monkeypatch.setenv("LEAN_LIVE_BASE_URL", "https://live.lean-lang.org/")
+    monkeypatch.setenv("LEAN_LIVE_PROJECT", "mathlib-v4.24.0")
+    monkeypatch.setenv("LEAN_LIVE_CODE_PARAM", "code")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    inside = workspace / "Inside.lean"
+    inside.write_text(
+        "theorem t : True := by\n"
+        "  trivial\n",
+        encoding="utf-8",
+    )
+
+    identifier = encode_declaration_id(path="Inside.lean", symbol="t", line=1)
+    payload = declaration_text_for_id(
+        workspace_root=workspace,
+        client=None,
+        identifier=identifier,
+    )
+    params = parse_qs(urlparse(payload.url).fragment)
+
+    assert params["project"] == ["mathlib-v4.24.0"]
+    assert "code" in params
+    assert "theorem t : True := by" in params["code"][0]
+
+
+def test_build_canonical_url_lean4web_codez_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LEAN_CANONICAL_URL_SCHEME", "lean4web")
+    monkeypatch.setenv("LEAN_LIVE_BASE_URL", "https://live.lean-lang.org/")
+    monkeypatch.setenv("LEAN_LIVE_CODE_PARAM", "codez")
+
+    identifier = encode_declaration_id(path="Inside.lean", symbol="t", line=1)
+    if importlib.util.find_spec("lzstring") is None:
+        with pytest.raises(LeanToolError):
+            build_canonical_url(identifier)
+        return
+
+    url = build_canonical_url(identifier)
+    assert "&codez=" in url
 
 
 @pytest.mark.asyncio
