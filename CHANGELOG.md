@@ -1,0 +1,38 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [0.21.0] - Unreleased
+
+Breaking release that completes the MCP app migration on `app` and aligns the server with OpenAI MCP guidance.
+
+### Breaking changes
+
+- Remove legacy `lean_*` tool names.
+- Keep only `streamable-http` and `sse` as supported transports.
+- Enforce workspace-relative `path` handling for file tools.
+- Split exposed tools by server profile (`read` / `write`) with no legacy compatibility aliases.
+
+### OpenAI MCP conformance
+
+- Return `search`/`fetch` via explicit MCP text-content wrappers with mirrored `structuredContent`.
+- Keep per-tool annotations and mixed-auth security metadata aligned with current guidance.
+- Add explicit "Use this when..." tool descriptions across the full tool surface.
+- Enforce strict input schemas (`additionalProperties: false`) across the full tool surface.
+- Add MCP test coverage that validates strict schema behavior in both read and write profiles.
+- Add HTTP compatibility coverage for health checks and CORS preflight.
+
+### Transport and runtime
+
+- Add `GET /` health route for connector-wizard compatibility.
+- Add configurable CORS behavior for MCP endpoints.
+- Add configurable transport security defaults with ChatGPT/local origin allowlists.
+- Refresh runtime docs for MCP app env mappings (`LEAN_WORKSPACE_ROOT`, `LEAN_SERVER_PROFILE`, `LEAN_BIND_HOST`, `LEAN_BIND_PORT`, `LEAN_PUBLIC_BASE_URL`).
+- Bump `mcp[cli]` to `1.26.0`.
+
+### CI and release
+
+- Provision Lean toolchain and ripgrep in CI matrix jobs before running MCP tests.
+- Run only the `tests/mcp` suite in CI after legacy test tree removal.
+- Keep release preflight checks aligned with CI (`ruff`, `pytest tests/mcp`, `uv build`).
+- Keep `release.sh` publishing manual and note fork-targeted PR flow.

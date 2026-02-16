@@ -8,16 +8,11 @@ import json
 import logging
 import os
 import shutil
-import ssl
 import subprocess
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
-import certifi
-import orjson
-
+from lean_lsp_mcp.http_client import HttpRequestError, request_json_sync
 from lean_lsp_mcp.models import LoogleResult
 
 logger = logging.getLogger(__name__)
@@ -33,13 +28,15 @@ def get_cache_dir() -> Path:
 def loogle_remote(query: str, num_results: int) -> list[LoogleResult] | str:
     """Query the remote loogle API."""
     try:
-        req = urllib.request.Request(
-            f"https://loogle.lean-lang.org/json?q={urllib.parse.quote(query)}",
+        results = request_json_sync(
+            "GET",
+            "https://loogle.lean-lang.org/json",
+            params={"q": query},
+            timeout=10,
             headers={"User-Agent": "lean-lsp-mcp/0.1"},
         )
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-        with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as response:
-            results = orjson.loads(response.read())
+        if not isinstance(results, dict):
+            return "Unexpected loogle response format."
         if "hits" not in results:
             return "No results found."
         hits = results["hits"][:num_results]
@@ -51,7 +48,9 @@ def loogle_remote(query: str, num_results: int) -> list[LoogleResult] | str:
             )
             for r in hits
         ]
-    except Exception as e:
+    except HttpRequestError as e:
+        return f"loogle error:\n{e}"
+    except Exception as e:  # noqa: BLE001
         return f"loogle error:\n{e}"
 
 

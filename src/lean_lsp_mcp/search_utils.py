@@ -69,7 +69,8 @@ def lean_local_search(
     query: str,
     limit: int = 32,
     project_root: Path | None = None,
-) -> list[dict[str, str]]:
+    include_lean_src: bool = False,
+) -> list[dict[str, str | int]]:
     """Search Lean declarations matching ``query`` using ripgrep; results include theorems, lemmas, defs, classes, instances, structures, inductives, abbrevs, and opaque decls."""
     root = (project_root or Path.cwd()).resolve()
 
@@ -83,7 +84,6 @@ def lean_local_search(
         "--json",
         "--no-ignore",
         "--smart-case",
-        "--hidden",
         "--color",
         "never",
         "--no-messages",
@@ -92,17 +92,21 @@ def lean_local_search(
         "-g",
         "!.git/**",
         "-g",
-        "!.lake/build/**",
+        "!.lake/**",
+        "-g",
+        "!.direnv/**",
+        "-g",
+        "!build/**",
         pattern,
         str(root),
     ]
 
-    if lean_src := _get_lean_src_search_path():
+    if include_lean_src and (lean_src := _get_lean_src_search_path()):
         command.append(lean_src)
 
     process = _create_ripgrep_process(command, cwd=str(root))
 
-    matches: list[dict[str, str]] = []
+    matches: list[dict[str, str | int]] = []
     stderr_text = ""
     terminated_early = False
     stderr_chunks: list[str] = []
@@ -157,7 +161,15 @@ def lean_local_search(
             except ValueError:
                 display_path = str(file_path)
 
-            matches.append({"name": decl_name, "kind": decl_kind, "file": display_path})
+            entry: dict[str, str | int] = {
+                "name": decl_name,
+                "kind": decl_kind,
+                "file": display_path,
+            }
+            line_number = data.get("line_number")
+            if isinstance(line_number, int) and line_number >= 1:
+                entry["line"] = line_number
+            matches.append(entry)
 
             if len(matches) >= limit:
                 terminated_early = True

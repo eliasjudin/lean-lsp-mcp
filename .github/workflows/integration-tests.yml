@@ -1,11 +1,12 @@
 name: Integration Tests
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   schedule:
-    # Run weekly on Sundays at 00:00 UTC
     - cron: '0 0 * * 0'
   workflow_dispatch:
-    # Allow manual triggering
 
 jobs:
   integration-test:
@@ -21,6 +22,22 @@ jobs:
       - name: Add elan to PATH
         run: echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
+      - name: Cache elan
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('tests/test_project/lean-toolchain') }}
+          restore-keys: |
+            elan-${{ runner.os }}-
+
+      - name: Install Lean toolchain
+        run: |
+          TOOLCHAIN="$(cat tests/test_project/lean-toolchain)"
+          if ! elan toolchain list | grep -Fq "$TOOLCHAIN"; then
+            elan toolchain install "$TOOLCHAIN"
+          fi
+          elan default "$TOOLCHAIN"
+
       - uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.12"
@@ -31,17 +48,17 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --extra dev
 
-      - name: Update lake dependencies
-        working-directory: tests/test_project
-        run: lake update --keep-toolchain
-
-      - name: Download Mathlib cache
-        working-directory: tests/test_project
-        run: lake exe cache get
+      - name: Cache test project Lake artifacts
+        uses: actions/cache@v4
+        with:
+          path: tests/test_project/.lake
+          key: lake-${{ runner.os }}-${{ hashFiles('tests/test_project/lean-toolchain', 'tests/test_project/lakefile.toml', 'tests/test_project/lake-manifest.json') }}
+          restore-keys: |
+            lake-${{ runner.os }}-
 
       - name: Build test project
         working-directory: tests/test_project
         run: lake build
 
       - name: Run all tests
-        run: uv run pytest tests/ -v --timeout=300
+        run: uv run pytest tests/mcp -v -m "not slow" --timeout=300

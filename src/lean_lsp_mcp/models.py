@@ -9,6 +9,7 @@ class LocalSearchResult(BaseModel):
     name: str = Field(description="Declaration name")
     kind: str = Field(description="Declaration kind (theorem, def, class, etc.)")
     file: str = Field(description="Relative file path")
+    line: Optional[int] = Field(None, description="Declaration line number (1-indexed)")
 
 
 class LeanSearchResult(BaseModel):
@@ -125,7 +126,7 @@ class RunResult(BaseModel):
 
 
 class DeclarationInfo(BaseModel):
-    file_path: str = Field(description="Path to declaration file")
+    path: str = Field(description="Workspace-relative path to declaration file")
     content: str = Field(description="File content")
 
 
@@ -231,3 +232,29 @@ class ProofProfileResult(BaseModel):
     categories: dict[str, float] = Field(
         default_factory=dict, description="Cumulative time by category in ms"
     )
+
+
+class AppTransportPaths(BaseModel):
+    streamable_http: str = Field(description="Streamable HTTP mount path")
+    sse: str = Field(description="SSE mount path")
+
+
+class AppToolGroups(BaseModel):
+    read: List[str] = Field(default_factory=list, description="Read tool names")
+    write: List[str] = Field(default_factory=list, description="Write tool names")
+    enabled: List[str] = Field(
+        default_factory=list, description="Tools enabled for active profile"
+    )
+
+
+class AppHomeResult(BaseModel):
+    app_name: str = Field(description="App display name")
+    profile: str = Field(description="Active server profile")
+    auth_mode: str = Field(description="Active authentication mode")
+    transport: str = Field(description="Active transport protocol")
+    workspace_root: str = Field(description="Workspace root path")
+    template_uri: str = Field(description="MCP app template URI")
+    transport_paths: Optional[AppTransportPaths] = Field(
+        default=None, description="Available MCP transport mount paths (HTTP only)"
+    )
+    tool_groups: AppToolGroups = Field(description="Tool groups by capability")
