@@ -18,6 +18,114 @@ from lean_lsp_mcp.contracts import FetchPayload, SearchPayload, SearchResultDoc
 _DECLARATION_START_PATTERN = re.compile(
     r"^\s*(?:theorem|lemma|def|axiom|class|instance|structure|inductive|abbrev|opaque)\b"
 )
+_LOCAL_HTTP_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_DEFAULT_CANONICAL_URL_SCHEME = "decl_path"
+_DEFAULT_LEAN4WEB_BASE_URL = "https://live.lean-lang.org/"
+_DEFAULT_LEAN4WEB_PROJECT = "mathlib-v4.24.0"
+
+
+def _canonical_url_scheme() -> str:
+    raw = os.environ.get(
+        "LEAN_CANONICAL_URL_SCHEME", _DEFAULT_CANONICAL_URL_SCHEME
+    ).strip()
+    scheme = (raw or _DEFAULT_CANONICAL_URL_SCHEME).lower()
+    if scheme in {"decl_path", "decl"}:
+        return "decl_path"
+    if scheme in {"lean4web", "live"}:
+        return "lean4web"
+    raise LeanToolError(
+        "LEAN_CANONICAL_URL_SCHEME must be one of: decl_path, lean4web."
+    )
+
+
+def _validated_http_base_url(*, value: str, env_name: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise LeanToolError(f"{env_name} must be an absolute HTTP(S) URL.")
+    if parsed.scheme == "http" and parsed.hostname not in _LOCAL_HTTP_HOSTS:
+        raise LeanToolError(
+            f"{env_name} must use HTTPS (HTTP is only allowed for localhost testing)."
+        )
+    return value
+
+
+def _render_live_code(
+    *,
+    symbol: str | None,
+    rel_path: str | None,
+    declaration_text: str | None,
+) -> str:
+    lines = ["import Mathlib", ""]
+    if rel_path:
+        lines.append(f"-- source: {rel_path}")
+
+    if declaration_text:
+        lines.append(declaration_text.rstrip())
+    elif symbol:
+        lines.append(f"#check {symbol}")
+    else:
+        lines.append("-- declaration lookup")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _encode_live_code(code: str) -> tuple[str, str]:
+    mode_raw = os.environ.get("LEAN_LIVE_CODE_PARAM", "code").strip().lower()
+    mode = mode_raw or "code"
+    if mode == "code":
+        return "code", quote(code, safe="")
+    if mode == "codez":
+        try:
+            from lzstring import LZString  # type: ignore[import-not-found]
+        except Exception as exc:  # noqa: BLE001
+            raise LeanToolError(
+                "LEAN_LIVE_CODE_PARAM=codez requires the optional 'lzstring' package."
+            ) from exc
+
+        compressed = LZString().compressToBase64(code).rstrip("=")
+        return "codez", quote(compressed, safe="")
+
+    raise LeanToolError("LEAN_LIVE_CODE_PARAM must be one of: code, codez.")
+
+
+def _build_lean4web_url(
+    *,
+    identifier: str,
+    symbol: str | None,
+    rel_path: str | None,
+    declaration_text: str | None,
+) -> str:
+    base_raw = (
+        os.environ.get("LEAN_LIVE_BASE_URL", "").strip() or _DEFAULT_LEAN4WEB_BASE_URL
+    )
+    base = _validated_http_base_url(value=base_raw, env_name="LEAN_LIVE_BASE_URL")
+    parsed_base = urlparse(base)
+    base_without_hash = parsed_base._replace(query="", fragment="").geturl()
+
+    decoded_symbol = symbol
+    decoded_path = rel_path
+    if decoded_symbol is None or decoded_path is None:
+        try:
+            decoded = decode_declaration_id(identifier)
+            if decoded_symbol is None and isinstance(decoded.get("symbol"), str):
+                decoded_symbol = decoded["symbol"]
+            if decoded_path is None and isinstance(decoded.get("path"), str):
+                decoded_path = decoded["path"]
+        except LeanToolError:
+            pass
+
+    code = _render_live_code(
+        symbol=decoded_symbol,
+        rel_path=decoded_path,
+        declaration_text=declaration_text,
+    )
+    code_key, encoded_code = _encode_live_code(code)
+    project_raw = (
+        os.environ.get("LEAN_LIVE_PROJECT", "").strip() or _DEFAULT_LEAN4WEB_PROJECT
+    )
+    project = quote(project_raw, safe="")
+
+    return f"{base_without_hash}#project={project}&{code_key}={encoded_code}"
 
 
 def _leading_indent_width(line: str) -> int:
@@ -58,26 +166,30 @@ def decode_declaration_id(identifier: str) -> dict[str, str | int | None]:
     return {"path": path, "symbol": symbol, "line": line}
 
 
-def build_canonical_url(identifier: str) -> str:
+def build_canonical_url(
+    identifier: str,
+    *,
+    symbol: str | None = None,
+    rel_path: str | None = None,
+    declaration_text: str | None = None,
+) -> str:
+    if _canonical_url_scheme() == "lean4web":
+        return _build_lean4web_url(
+            identifier=identifier,
+            symbol=symbol,
+            rel_path=rel_path,
+            declaration_text=declaration_text,
+        )
+
     base = (
         os.environ.get("LEAN_PUBLIC_BASE_URL", "").strip()
         or os.environ.get("LEAN_OAUTH_RESOURCE_SERVER_URL", "").strip()
     )
     if base:
-        parsed = urlparse(base)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise LeanToolError(
-                "Canonical URL base must be an absolute HTTP(S) URL. "
-                "Set LEAN_PUBLIC_BASE_URL (or LEAN_OAUTH_RESOURCE_SERVER_URL) accordingly."
-            )
-        if parsed.scheme == "http" and parsed.hostname not in {
-            "127.0.0.1",
-            "localhost",
-            "::1",
-        }:
-            raise LeanToolError(
-                "Canonical URL base must use HTTPS (HTTP is only allowed for localhost testing)."
-            )
+        _validated_http_base_url(
+            value=base,
+            env_name="LEAN_PUBLIC_BASE_URL (or LEAN_OAUTH_RESOURCE_SERVER_URL)",
+        )
         return f"{base.rstrip('/')}/decl/{quote(identifier)}"
     return f"lean://decl/{identifier}"
 
@@ -121,7 +233,9 @@ def search_payload_from_local_results(
             SearchResultDoc(
                 id=identifier,
                 title=item.name,
-                url=build_canonical_url(identifier),
+                url=build_canonical_url(
+                    identifier, symbol=item.name, rel_path=relative_path
+                ),
             )
         )
     return SearchPayload(results=docs)
@@ -200,7 +314,12 @@ def declaration_text_for_id(
             id=identifier,
             title=symbol,
             text=selected,
-            url=build_canonical_url(identifier),
+            url=build_canonical_url(
+                identifier,
+                symbol=symbol,
+                rel_path=rel_path,
+                declaration_text=selected,
+            ),
             metadata={"path": rel_path, "symbol": symbol, "line": str(line)},
         )
 
@@ -223,6 +342,11 @@ def declaration_text_for_id(
         id=identifier,
         title=symbol,
         text=selected,
-        url=build_canonical_url(identifier),
+        url=build_canonical_url(
+            identifier,
+            symbol=symbol,
+            rel_path=rel_path,
+            declaration_text=selected,
+        ),
         metadata={"path": rel_path, "symbol": symbol},
     )
