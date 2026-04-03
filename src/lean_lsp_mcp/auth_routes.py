@@ -14,6 +14,7 @@ from lean_lsp_mcp.auth import (
     AuthMode,
     CompositeTokenVerifier,
     bearer_token_from_header,
+    oauth_protected_resource_metadata_path,
     oauth_resource_metadata_url,
 )
 from lean_lsp_mcp.models import (
@@ -68,13 +69,19 @@ def register_oauth_metadata_route(
     }:
         return
 
-    @mcp.custom_route(
-        "/.well-known/oauth-protected-resource",
-        methods=["GET"],
-        include_in_schema=False,
-    )
-    async def oauth_protected_resource_metadata(_request: Request) -> Response:
-        return JSONResponse(oauth_protected_resource_payload(auth_config))
+    route_paths = {"/.well-known/oauth-protected-resource"}
+    if auth_config.resource_server_url:
+        route_paths.add(
+            oauth_protected_resource_metadata_path(auth_config.resource_server_url)
+        )
+
+    def _register_route(path: str) -> None:
+        @mcp.custom_route(path, methods=["GET"], include_in_schema=False)
+        async def oauth_protected_resource_metadata(_request: Request) -> Response:
+            return JSONResponse(oauth_protected_resource_payload(auth_config))
+
+    for path in sorted(route_paths):
+        _register_route(path)
 
 
 def authorization_header_from_context(ctx: Context) -> str | None:

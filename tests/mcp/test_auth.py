@@ -17,7 +17,9 @@ from lean_lsp_mcp.auth import (
     AuthMode,
     CompositeTokenVerifier,
     OIDCJWTVerifier,
+    oauth_resource_metadata_url,
 )
+from lean_lsp_mcp.auth_routes import www_authenticate_challenge
 from tests.helpers.mcp_client import MCPClient
 
 
@@ -216,6 +218,37 @@ def test_oidc_jwks_cached_within_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
     assert call_counts["jwks"] == 1
 
 
+def test_oauth_resource_metadata_url_inserts_well_known_before_resource_path() -> None:
+    config = AuthConfig(
+        mode=AuthMode.OAUTH,
+        issuer_url="https://issuer.example.invalid",
+        resource_server_url="https://resource.example.invalid/mcp/v1",
+        required_scopes=[],
+        bearer_token=None,
+    )
+
+    assert (
+        oauth_resource_metadata_url(config)
+        == "https://resource.example.invalid/.well-known/oauth-protected-resource/mcp/v1"
+    )
+
+
+def test_www_authenticate_challenge_uses_path_scoped_resource_metadata() -> None:
+    config = AuthConfig(
+        mode=AuthMode.MIXED,
+        issuer_url="https://issuer.example.invalid",
+        resource_server_url="https://resource.example.invalid/mcp",
+        required_scopes=["build:write"],
+        bearer_token="server-token",
+    )
+
+    challenges = www_authenticate_challenge(config)
+    assert (
+        'resource_metadata="https://resource.example.invalid/.well-known/oauth-protected-resource/mcp"'
+        in challenges[0]
+    )
+
+
 @pytest.mark.asyncio
 async def test_remote_bearer_auth_rejects_invalid_token(
     remote_client_factory: Callable[..., AsyncContextManager[MCPClient]],
@@ -378,4 +411,31 @@ async def test_remote_mixed_oauth_metadata_route_is_available(
 
         payload = await asyncio.to_thread(_read_metadata)
         assert payload["resource"] == client.base_url
+        assert payload["authorization_servers"] == ["https://issuer.example.invalid"]
+
+
+@pytest.mark.asyncio
+async def test_remote_mixed_oauth_metadata_route_supports_path_scoped_resource(
+    remote_client_factory: Callable[..., AsyncContextManager[MCPClient]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "LEAN_OAUTH_RESOURCE_SERVER_URL", "https://resource.example.invalid/mcp"
+    )
+    async with remote_client_factory(
+        transport="streamable-http",
+        profile="write",
+        auth_mode="mixed",
+        token="server-token",
+        client_token="",
+    ) as client:
+        assert client.base_url is not None
+        url = f"{client.base_url}/.well-known/oauth-protected-resource/mcp"
+
+        def _read_metadata() -> dict[str, object]:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        payload = await asyncio.to_thread(_read_metadata)
+        assert payload["resource"] == "https://resource.example.invalid/mcp"
         assert payload["authorization_servers"] == ["https://issuer.example.invalid"]

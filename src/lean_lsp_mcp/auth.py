@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import jwt
 from mcp.server.auth.provider import AccessToken, TokenVerifier
@@ -338,9 +339,16 @@ def bearer_token_from_header(authorization: str | None) -> str | None:
     return token or None
 
 
+def oauth_protected_resource_metadata_path(resource_server_url: str) -> str:
+    resource_path = urlsplit(resource_server_url).path or "/"
+    if resource_path == "/":
+        return "/.well-known/oauth-protected-resource"
+    return f"/.well-known/oauth-protected-resource{resource_path}"
+
+
 def oauth_resource_metadata_url(config: AuthConfig) -> str | None:
     if not config.resource_server_url:
         return None
-    return (
-        f"{config.resource_server_url.rstrip('/')}/.well-known/oauth-protected-resource"
-    )
+    parsed = urlsplit(config.resource_server_url)
+    metadata_path = oauth_protected_resource_metadata_path(config.resource_server_url)
+    return urlunsplit((parsed.scheme, parsed.netloc, metadata_path, "", ""))
