@@ -506,14 +506,15 @@ async def lsp_build(
     if not lean_project_path:
         lean_project_path_obj = configured_root
     else:
-        lean_project_path_obj = Path(lean_project_path).resolve()
+        lean_project_path_obj = resolve_file_path(
+            ctx, lean_project_path, require_exists=False
+        )
         lifespan.lean_project_path = lean_project_path_obj
 
     if lean_project_path_obj is None:
         raise LeanToolError(
             "Lean project path not known yet. Provide `lean_project_path` explicitly or call another tool first."
         )
-
     async def build_factory() -> BuildResult:
         return await _run_build(ctx, lean_project_path_obj, clean, output_lines)
 
