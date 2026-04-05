@@ -7,7 +7,7 @@ from mcp.server.fastmcp.utilities.logging import get_logger
 from leanclient import LeanLSPClient
 
 from lean_lsp_mcp.file_utils import get_relative_file_path
-from lean_lsp_mcp.utils import OutputCapture
+from lean_lsp_mcp.utils import LeanToolError, OutputCapture
 
 
 logger = get_logger(__name__)
@@ -61,7 +61,11 @@ def startup_client(ctx: Context):
 
 
 def resolve_file_path(
-    ctx: Context, file_path: str, *, require_exists: bool = True
+    ctx: Context,
+    file_path: str,
+    *,
+    require_exists: bool = True,
+    enforce_project_root: bool = True,
 ) -> Path:
     """Resolve a file path with support for project-root-relative inputs.
 
@@ -78,6 +82,15 @@ def resolve_file_path(
         resolved = (project_root / path_obj).resolve()
     else:
         resolved = path_obj.resolve()
+
+    if enforce_project_root and project_root is not None:
+        project_root = project_root.resolve()
+        try:
+            resolved.relative_to(project_root)
+        except ValueError as exc:
+            raise LeanToolError(
+                f"Path '{resolved}' is outside the configured Lean project root '{project_root}'."
+            ) from exc
 
     if require_exists and not resolved.exists():
         raise FileNotFoundError(str(resolved))
@@ -121,7 +134,14 @@ def infer_project_path(file_path: str, ctx: Context | None = None) -> Path | Non
         if not hasattr(lifespan, "project_cache"):
             lifespan.project_cache = {}
 
-    abs_file_path = str(resolve_file_path(ctx, file_path, require_exists=False))
+    abs_file_path = str(
+        resolve_file_path(
+            ctx,
+            file_path,
+            require_exists=False,
+            enforce_project_root=False,
+        )
+    )
     file_dir = os.path.dirname(abs_file_path)
 
     def set_project_path(project_path: Path, cache_dirs: list[str]) -> Path | None:
@@ -171,7 +191,7 @@ def infer_project_path(file_path: str, ctx: Context | None = None) -> Path | Non
 def setup_client_for_file(ctx: Context, file_path: str) -> str | None:
     """Ensure the LSP client matches the file's Lean project and return its relative path."""
     try:
-        resolved_file = str(resolve_file_path(ctx, file_path))
+        resolved_file = str(resolve_file_path(ctx, file_path, enforce_project_root=False))
     except (FileNotFoundError, OSError):
         return None
 

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from lean_lsp_mcp.server import lsp_build
+from lean_lsp_mcp.utils import LeanToolError
 
 
 class _FailingClient:
@@ -164,3 +166,19 @@ async def test_lsp_build_continues_when_client_close_fails(build_mocks, patch_bu
     assert failing_client.close_calls == 1
     assert result.success
     assert ctx.request_context.lifespan_context.client is not failing_client
+
+
+@pytest.mark.asyncio
+async def test_lsp_build_rejects_path_outside_configured_root(tmp_path: Path):
+    ctx = MagicMock()
+    project = tmp_path / "proj"
+    project.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    ctx.request_context.lifespan_context.lean_project_path = project
+    ctx.request_context.lifespan_context.client = None
+    ctx.request_context.lifespan_context.build_coordinator = None
+
+    with pytest.raises(LeanToolError, match="outside the configured Lean project"):
+        await lsp_build(ctx, lean_project_path=str(outside))
