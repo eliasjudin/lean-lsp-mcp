@@ -106,3 +106,21 @@ async def test_verify_nonexistent_theorem(
             expect_error=True,
         )
         assert result.isError
+
+
+@pytest.mark.asyncio
+async def test_verify_rejects_injected_theorem_name(
+    mcp_client_factory: Callable[[], AsyncContextManager[MCPClient]],
+    test_project_path: Path,
+) -> None:
+    verify_file = test_project_path / "VerifyTest.lean"
+    async with mcp_client_factory() as client:
+        result = await client.call_tool(
+            "lean_verify",
+            {
+                "file_path": str(verify_file),
+                "theorem_name": "verify_clean\n#eval IO.println 1",
+            },
+            expect_error=True,
+        )
+        assert result.isError

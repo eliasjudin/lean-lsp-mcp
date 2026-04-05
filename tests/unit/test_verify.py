@@ -9,6 +9,7 @@ import pytest
 
 from lean_lsp_mcp.verify import (
     check_axiom_errors,
+    is_valid_theorem_name,
     parse_axioms,
     scan_warnings,
 )
@@ -101,3 +102,17 @@ class TestScanWarnings:
 
     def test_nonexistent(self, tmp_path: Path):
         assert scan_warnings(tmp_path / "nope.lean") == []
+
+
+class TestIsValidTheoremName:
+    def test_accepts_valid_names(self):
+        assert is_valid_theorem_name("verify_clean")
+        assert is_valid_theorem_name("Namespace.verify_clean")
+        assert is_valid_theorem_name("Ns.sub.theorem_name'")
+
+    def test_rejects_invalid_names(self):
+        assert not is_valid_theorem_name("")
+        assert not is_valid_theorem_name("0foo")
+        assert not is_valid_theorem_name("Foo\n#eval IO.println 1")
+        assert not is_valid_theorem_name("Foo bar")
+        assert not is_valid_theorem_name("Foo..bar")

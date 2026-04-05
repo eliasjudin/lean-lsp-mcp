@@ -26,6 +26,14 @@ _WARNING_PATTERNS: list[str] = [
 ]
 
 _COMBINED_PATTERN = "|".join(f"(?:{p})" for p in _WARNING_PATTERNS)
+_LEAN_QUALIFIED_NAME_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$"
+)
+
+
+def is_valid_theorem_name(theorem_name: str) -> bool:
+    """Return True for a simple, fully-qualified Lean identifier."""
+    return bool(_LEAN_QUALIFIED_NAME_RE.fullmatch(theorem_name))
 
 
 def parse_axioms(diagnostics: list[dict]) -> list[str]:
