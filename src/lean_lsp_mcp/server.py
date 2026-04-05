@@ -1477,6 +1477,7 @@ def verify_theorem(
     """Check theorem axioms + optional source scan. Only scans the given file, not imports."""
     from lean_lsp_mcp.verify import (
         check_axiom_errors,
+        is_valid_theorem_name,
         parse_axioms,
         scan_warnings,
     )
@@ -1486,6 +1487,10 @@ def verify_theorem(
         _raise_invalid_path(file_path)
 
     abs_path = Path(file_path)
+    if not is_valid_theorem_name(theorem_name):
+        raise LeanToolError(
+            "Invalid theorem_name: expected a fully qualified Lean identifier"
+        )
     client: LeanLSPClient = ctx.request_context.lifespan_context.client
     client.open_file(rel_path)
 
